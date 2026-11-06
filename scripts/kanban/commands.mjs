@@ -16,6 +16,7 @@ const help = `Kanban workflow commands:
   team worker add TEAM --client codex --chat TITLE | --id ID
   team worker add TEAM --client opencode --session ID
   team worker remove TEAM --worker WORKER_ID; team remove NAME
+  automation desktop-configure --thread ID --turn ID; automation reload
   automation start|status|pause|resume|stop; automation retry TICKET_ID
   automation native-list; automation native-claim DISPATCH_ID
   automation native-receipt DISPATCH_ID --thread ID
@@ -125,6 +126,10 @@ export async function workflowCommand(root, argv) {
       if (verb === 'native-failure' && !flags.reason) throw new Error('Supply --reason');
       result = control('host_native_receipt', { id: name, thread_id: flags.thread,
         error: verb === 'native-failure' ? flags.reason : undefined });
+    } else if (verb === 'reload') {
+      await stopConfigured(root);
+      for (let n=0; n<50 && await verifiedDaemon(root); n++) await new Promise(done=>setTimeout(done,100));
+      result = await startConfigured(root);
     } else if (verb === 'start') {
       const settings = control('snapshot').orchestration_settings[0];
       if (!settings?.manager) throw new Error('Configure a manager first');

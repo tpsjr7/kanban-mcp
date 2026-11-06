@@ -14,3 +14,5 @@ Configure the desktop caller with `automation desktop-configure --thread EXACT_I
 Keep claims, browser approvals, reviewed plan hashes and integration evidence intact. A receipt is not proof of completed work. Stop all live writers before a real restore; restore-check uses disposable storage.
 
 Tests: `npm ci`, `npm run test:pilot`, `node --test scripts/kanban/workflow.test.mjs`, and `python tests/test_desktop_bridge.py`. Board regression scripts run inside the built image with tests mounted read-only.
+
+`automation reload` restarts only the verified host supervisor without pausing the board. Desktop endpoint disappearance leaves unowned Codex work on the desktop route; only a positively accessible existing CLI owner uses the CLI route. No fallback follows a desktop error.

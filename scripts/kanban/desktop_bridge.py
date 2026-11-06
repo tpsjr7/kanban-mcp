@@ -9,14 +9,14 @@ import struct
 import uuid
 
 
-def endpoint():
+def endpoint(proc_root=Path('/proc'), socket_prefix='/tmp/codex-app-tools/'):
     candidates = []
     sockets = {}
-    for line in Path('/proc/net/unix').read_text().splitlines()[1:]:
+    for line in (proc_root / 'net/unix').read_text().splitlines()[1:]:
         fields = line.split(maxsplit=7)
-        if len(fields) == 8 and fields[7].startswith('/tmp/codex-app-tools/'):
+        if len(fields) == 8 and fields[7].startswith(socket_prefix):
             sockets['socket:[' + fields[6] + ']'] = fields[7]
-    for process in Path('/proc').iterdir():
+    for process in proc_root.iterdir():
         if not process.name.isdigit():
             continue
         try:

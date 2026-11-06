@@ -38,13 +38,27 @@ export function desktopOwnsChat(chatId, io = { statSync, readFileSync, readlinkS
   }
 }
 
+export function codexHasWriter(chatId) {
+  try {
+    const inode = statSync(join(homedir(), '.codex/thread-writer-locks', chatId + '.lock')).ino;
+    return readFileSync('/proc/locks', 'utf8').split('\n').some(line => {
+      const fields = line.trim().split(/\s+/);
+      return fields[5]?.endsWith(':' + inode) && fields[3] === 'WRITE';
+    });
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 export function inspectIdentity(identity) {
   if (identity.client === 'codex') {
-    if (desktopOwnsChat(identity.chat_id)) {
+    if (desktopOwnsChat(identity.chat_id) || !codexHasWriter(identity.chat_id)) {
       return JSON.parse(command('python', [fileURLToPath(new URL('./desktop_bridge.py', import.meta.url)), 'read', identity.chat_id]));
     }
     const actual = JSON.parse(command('python', [bridge, 'read', identity.chat_id, '--turns', '1', '--text-limit', '100']));
-    return { ...actual, route: desktopOwnsChat(identity.chat_id) ? 'native-mcp' : 'cli' };
+    if (actual.status?.type === 'notLoaded') throw new Error('The owning CLI session is not accessible through its control server');
+    return { ...actual, route: 'cli' };
   }
   const result = opencode('GET', `/api/session/${encodeURIComponent(identity.chat_id)}`).data;
   if (!result || result.id !== identity.chat_id) throw new Error('OpenCode session identity mismatch');

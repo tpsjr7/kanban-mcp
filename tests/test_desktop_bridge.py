@@ -36,6 +36,36 @@ class FramingTests(unittest.TestCase):
             finally:
                 worker.join()
 
+    def test_discovery_rejects_missing_and_ambiguous_owners(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'net').mkdir()
+            (root / 'net/unix').write_text('header\n')
+            with self.assertRaises(RuntimeError):
+                bridge.endpoint(root, directory)
+            process = root / '123'
+            (process / 'fd').mkdir(parents=True)
+            (process / 'exe').symlink_to('/usr/lib/chatgpt/ChatGPT')
+            listeners = []
+            try:
+                for number in (1, 2):
+                    path = root / f'{number}.sock'
+                    listener = socket.socket(socket.AF_UNIX)
+                    listener.bind(str(path))
+                    path.chmod(0o600)
+                    listeners.append(listener)
+                    (process / 'fd' / str(number)).symlink_to(f'socket:[{number}]')
+                    with (root / 'net/unix').open('a') as output:
+                        output.write(f'0: 0 0 0 1 1 {number} {path}\n')
+                    if number == 1:
+                        self.assertEqual(bridge.endpoint(root, directory), str(path))
+                with self.assertRaises(RuntimeError):
+                    bridge.endpoint(root, directory)
+            finally:
+                for listener in listeners:
+                    listener.close()
+
     def test_fragmented_success(self):
         self.assertEqual(self.run_response({'id':1,'result':{'tools':[]}}), {'tools':[]})
 

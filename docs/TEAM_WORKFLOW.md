@@ -1,0 +1,211 @@
+# Kanban team workflow
+
+Status: host automation and direct desktop socket delivery enabled; no heartbeat.
+Updated: 2026-11-06.
+
+## Commands and prerequisites
+
+The browser board and ordinary MCP access retain their Node/Docker prerequisites.
+Host-side chat automation additionally requires Linux `flock`, Python with
+`websockets`, the existing owning Codex CLI app-server socket for CLI sessions,
+and the installed OpenCode CLI/background API for OpenCode workers. Desktop-owned
+chats use the native app relay described below. It does not create another
+Codex app-server, change chat models/permissions, answer approval requests or
+expose a chat-control network listener. Chat transport is repository-owned under
+`scripts/kanban/`; it does not depend on a private skill installation.
+
+Configure or inspect the deployed workflow:
+
+```bash
+npm run kanban -- manager set --chat 'Kanban Todo'
+npm run kanban -- manager show
+npm run kanban -- team add local-a --instance local-a
+npm run kanban -- team worker add local-a --client codex --chat 'agent local-a'
+npm run kanban -- team list
+npm run kanban -- team show local-a
+npm run kanban -- team worker add local-a --client opencode --session ses_EXACT_ID
+npm run kanban -- team worker remove local-a --worker opencode:ses_EXACT_ID
+npm run kanban -- automation start
+npm run kanban -- automation status
+npm run kanban -- automation pause
+npm run kanban -- automation resume
+npm run kanban -- automation stop
+npm run kanban -- automation retry TICKET_ID
+npm run kanban -- automation release TICKET_ID
+```
+
+Use the corresponding names for local-b, local-c and local-d. Team/worker commands
+print JSON (`--json` is accepted); `--help` describes the commands. `--id` selects
+an exact Codex ID instead of resolving a unique title. OpenCode IDs are opaque
+strings and use `--session`; titles are read by exact session ID. Removing active
+members or teams is rejected. Team names, instance mappings and workers persist
+in the shared board database. Models and client permissions stay as configured.
+
+`manager set` creates the planning columns idempotently; it does not arm delivery.
+First `automation start` arms from a new event boundary and ignores prior moves.
+Start/reuse is protected by a host `flock`. There is one persistent network-isolated
+helper container per running supervisor, rather than a new helper per poll.
+`kanban up` starts/reuses enabled, unpaused automation; `down` stops only its
+verified supervisor. Explicit stop/pause requires resume before new dispatch.
+State/logs are private under `~/.local/state/music-gen/kanban-automation/`.
+Status exposes ownership, assignments, receipts and blockers. A foreign checkout's
+supervisor is never stopped or replaced.
+
+## Desktop delivery
+
+The phone can control the desktop app, while a separate Codex CLI daemon runs
+on the same host. Shared chat history does not make those servers interchangeable.
+The supervisor inspects the existing writer's process without changing its lock.
+Desktop-owned Codex chats enter a durable `native_pending` queue; the app's native
+`send_message_to_thread` delivers them. CLI and OpenCode keep their existing routes.
+If ownership cannot be inspected, delivery stops rather than guessing a server.
+
+The standalone supervisor now delivers pending desktop messages directly through
+the verified desktop-owned Unix socket. It discovers the owned endpoint and uses
+recorded exact caller identity. Keep the desktop app available. Ordinary host
+polling consumes no model calls while idle. No recurring app heartbeat is enabled.
+Configure a trusted adapter for the project canonical path, storage and evidence verification.
+
+Manual recovery remains available:
+
+The relay reads the exact target's status/history, waits for an idle chat, then:
+
+```bash
+npm run --silent kanban -- automation native-list --json
+npm run --silent kanban -- automation native-claim DISPATCH_ID
+# Send the returned prompt once through the native app tool to its exact target.
+npm run --silent kanban -- automation native-receipt DISPATCH_ID --thread ID
+# If sending fails or its outcome is uncertain:
+npm run --silent kanban -- automation native-failure DISPATCH_ID --thread ID --reason TEXT
+```
+
+Claiming repeats current revision, approval, plan, checkout and ownership checks,
+then atomically changes the state to `native_submitted` before sending. Repeated
+claims fail. Receipts validate the exact target and preserve a worker's faster
+acknowledgment. After an interruption, inspect actual target history for the
+dispatch ID before reconciling a receipt; never resend an uncertain submission.
+Pause/stop prevents new claims; stopping the host also prevents relay claims.
+Already accepted messages cannot be recalled, so workers recheck workflow state.
+The relay only transports approved dispatches; it does not perform ticket work.
+
+Inspect the app's automation settings for relay state. Pausing the board is
+sufficient to pause dispatch; pausing the app heartbeat alone leaves desktop
+messages queued. Never remove writer locks, start competing daemons or change a
+chat's model/permissions to recover a handoff.
+
+## Team and ticket lifecycle
+
+| Browser/worker action | Result and authority |
+| --- | --- |
+| Human Backlog → Needs Plan | Kanban Todo selects an available team/worker for planning. |
+| Worker claims instance and reports started | Host verifies ownership; Planning, with `team:<name>` tag. |
+| Worker reports plan_ready | Host reads scoped Markdown and stores its hash/text snapshot; Plan Review. |
+| Human Plan Review → Todo | Approves that plan and scope revision; implementation dispatched to the same team. |
+| Worker reports started | In Progress. |
+| Worker reports preview_ready | Clean task commit, check evidence and official preview URL verified; Review. |
+| Human Review → Done | Approves full gtg for the recorded commit; integrations serialize globally. |
+| Worker reports integrated | Host verifies main ancestry, restart receipt, public health, clean synchronized instance and released claim; Closed. |
+
+One team handles one active ticket and retains its instance through plan/preview
+review. One worker owns edits; other team chats can assist with research or review
+without competing writers. Claims remain individual exact chat/session IDs. An
+instance occupied by another chat is unavailable; registration never transfers
+it. No available team means the request waits. When capacity changes, the manager
+receives a new durable assignment notification for queued work.
+
+Open the ticket editor to see its team/worker, automation stage and reason,
+plan filesystem path, creator chat link, and preview link. Paths and chat names
+render as text; the browser does not serve arbitrary host files. Published previews must match the official instance
+URL. Managed Done is integration pending, and does not satisfy dependency or epic
+completion; Closed does. Unmanaged tickets retain ordinary column behavior.
+
+## Worker protocol
+
+Read `workflow_status` on canonical `/workspace/project` and validate dispatch
+ID, worker, stage and revision. Deduplicate dispatch IDs in your checkpoint. Claim
+only the assigned instance, preserve saved runtime/GPU settings, and synchronize
+clean committed main before planning. Do not edit primary while implementing.
+
+Reports use `workflow_report(client, chat_id, dispatch_id, kind, payload)` with
+JSON-string payloads. Supply the exact runtime ID (`CODEX_THREAD_ID` or
+`OPENCODE_SESSION_ID`) per call. Reports are accepted into an outbox; acceptance
+is distinct from host verification and board progression.
+
+```javascript
+// OpenCode: call through Code Mode execute using the current discovered catalog.
+await tools["kanban"]["workflow_status"]({});
+await tools["kanban"]["workflow_report"]({
+  client: "opencode", chat_id: exactSessionID, dispatch_id: assignedDispatchID,
+  kind: "plan_ready", payload: JSON.stringify({ plan: "docs/MY_TASK_PLAN.md" })
+});
+```
+
+Codex calls the same MCP tools with `client: "codex"` and its exact thread ID.
+The registered manager uses `workflow_assign(chat_id, item_id, team, worker)`;
+`worker` is the registered `client:chat_id` identifier. Metadata is caller-supplied
+attribution, not cryptographic identity proof. The trusted local host and
+nginx-authenticated browser are the authority boundary; never store credentials.
+
+- `started`: empty payload, after taking the matching instance claim.
+- `plan_ready`: `{plan: relativeMarkdownPath}`. Preserve the approved plan unchanged.
+- `preview_ready`: `{preview, commit, checks:[{result:"passed", evidence:relativePath}]}`.
+  Commit is the full current hash; checkout must be clean. Check evidence must
+  exist inside that instance. Report real required checks; file existence alone
+  does not prove test correctness or musical quality.
+- `integrated`: `{health:true, cleanup:true, restart_evidence:relativePathInPrimary}`.
+  The JSON receipt must contain current main `commit`, `mode` (`frontend` or
+  `full`), `api`, `frontend`, `proxy`, `entry` all true, and ISO `restarted_at`
+  after approval. Generate it from the official restart's actual probe results;
+  never invent passing checks. Retain the source restart logs.
+- `stopped`: checkpoint preserved; stop work without discarding changes.
+- `failed`: `{reason}`. Retains stage and assignment with an actionable explanation.
+
+## Approval, failure and recovery
+
+Only recorded browser transitions authorize planning, implementation or gtg.
+Agent/MCP moves cannot create approvals. Recheck approval immediately before
+writes and integration. Title/description edits invalidate approvals; host checks
+also reject changed plan hashes and reviewed commits. Backward browser moves
+invalidate approvals and queue a stop request. The team remains reserved until
+stop is acknowledged and matching-owner cleanup/release is verified. `automation
+release` then releases only the assignment, preserving ticket/history; it does
+not delete files or force an instance unlock. To enroll released work again, move
+it through Backlog → Needs Plan so the manager receives a fresh planning request.
+
+Returning an unassigned planning request to Backlog cancels its queued dispatch
+and releases the request without waiting for a nonexistent worker. After the
+supervisor processes that withdrawal, Backlog → Needs Plan creates one fresh
+request at the current revision. Assigned work still requires the worker's stop
+acknowledgment and verified owner-scoped release before re-entry.
+
+Busy chats and foreign claims remain queued. Submitted delivery without a receipt
+is uncertain, never automatically resent. Inspect the exact owning chat and
+receipt before recovery. `retry` permits acknowledged failures, not uncertain
+submission. It continues from the retained checkpoint; it does not authorize
+repeating completed side effects. Automatic-review denial is never bypassed with
+another sender, socket, permission setting or client.
+
+Integrations hold one durable global lease through required primary verification
+and cleanup. Failed gtg stays Done and retains the lease until resolved; another
+team cannot interleave integration. A transport receipt does not prove work
+started or finished. Worker reports and host verification are separate records.
+
+Backups include teams, assignments, approvals, event cursors, receipts and reports.
+For restoration, stop all board writers and the supervisor. Restore privately,
+set `orchestration_settings.paused=1` in the restored database before starting any
+writer, and inspect outstanding dispatches/receipts against actual Git and chats.
+Only explicit `automation resume` may restart delivery. Never replay a restored
+outbox blindly or overwrite live data during acceptance testing.
+
+See [team plan](OPERATIONS.md) and
+[acceptance record](OPERATIONS.md) for rollout status and evidence.
+
+## Plan references
+
+The ticket shows the verified absolute filesystem path when available and a
+link to the chat that created the plan. Codex uses `codex://threads/CHAT_ID`;
+OpenCode exposes the session ID and copying without an unverified opening URL.
+Creator identity is saved when the plan is verified, so later worker changes
+do not redirect it. Historical plans retain their stored path without guessed
+authors. Plan contents stay out of the ticket panel; review them in the creator
+chat. Internal snapshots and hashes remain available for approval validation.
