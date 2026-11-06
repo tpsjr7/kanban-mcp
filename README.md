@@ -1,3 +1,7 @@
+# Kanban MCP standalone fork
+
+This fork integrates update attribution, local browser timestamps, project columns, managed teams, Docker persistence and desktop socket dispatch directly into source. Build and operate with `npm run kanban -- up`; see [operations](docs/OPERATIONS.md). It does not require music_gen or an evaluation checkout. Upstream MIT attribution is retained below. No registry publication has been performed.
+
 # kanban-mcp
 
 A database-backed kanban board that AI coding agents use via [MCP](https://modelcontextprotocol.io/) (Model Context Protocol). Track issues, features, todos, epics, and diary entries across all your projects — with a web UI for humans and 40+ tools for agents.

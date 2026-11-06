@@ -1,0 +1,31 @@
+name: ${KANBAN_STACK_NAME:-kanban}
+services:
+  web:
+    image: ${KANBAN_MCP_IMAGE:-kanban-mcp:local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: ${KANBAN_STACK_NAME:-kanban}-web
+    labels:
+      ai.yolofi.kanban.owner: ${KANBAN_OWNER:?Use npm run kanban up}
+    environment:
+      KANBAN_PROJECT_DIR: ${KANBAN_PROJECT_DIR:-/workspace/project}
+      KANBAN_PROJECT_NAME: ${KANBAN_PROJECT_NAME:-project}
+    network_mode: bridge
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:18120:5000
+    volumes:
+      - board:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+volumes:
+  board:
+    name: ${KANBAN_STACK_NAME:-kanban}-data

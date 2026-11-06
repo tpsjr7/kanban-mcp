@@ -5,10 +5,13 @@
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:verbose": "jest --verbose"
+    "test:verbose": "jest --verbose",
+    "kanban": "node scripts/kanban.mjs",
+    "test:pilot": "node tests/kanban-time.test.mjs && node tests/kanban-attribution.test.mjs && node tests/kanban-plan-link.test.mjs"
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "jest-environment-jsdom": "^29.7.0"
+    "jest-environment-jsdom": "^29.7.0",
+    "jsdom": "26.1.0"
   }
 }
