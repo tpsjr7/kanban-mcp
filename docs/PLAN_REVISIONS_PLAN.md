@@ -99,3 +99,9 @@ board before migration and restart only Kanban after deployment authorization.
 Record precise test and rollout results; distinguish protocol tests from real
 client verification. No live ticket, runtime, approval or claim changes are
 part of writing this plan.
+
+## Implementation record
+
+See [acceptance](PLAN_REVISIONS_ACCEPTANCE.md) for committed implementation IDs,
+isolated checks, actual source-message inspection and the remaining live rollout
+gates. The production board has not been migrated or restarted for this feature.
