@@ -13,7 +13,7 @@ const {
     handleDrop,
     getDraggedCard,
     resetDragState
-} = require('../static/dragdrop.js');
+} = require('../kanban_mcp/static/dragdrop.js');
 
 describe('Drag and Drop Module', () => {
     // Setup DOM before each test

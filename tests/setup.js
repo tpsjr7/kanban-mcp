@@ -21,3 +21,25 @@ global.mockFetchSuccess = (data, status = 200) => {
 global.mockFetchError = (error) => {
   global.fetch.mockRejectedValueOnce(new Error(error));
 };
+
+// The browser template loads this helper before timeline.js.
+require('../kanban_mcp/static/browser-time.js');
+require('../kanban_mcp/static/update-attribution.js');
+
+// The server template supplies per-project columns before loading dragdrop.js.
+const builtinPermissions = {
+  issue: ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'],
+  feature: ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'],
+  epic: ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'],
+  todo: ['backlog', 'todo', 'in_progress', 'done'],
+  diary: ['done'],
+  question: ['backlog', 'review', 'closed'],
+};
+window.kanbanColumns = {
+  revision: 0,
+  columns: ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'].map(key => ({
+    key,
+    label: key,
+    allowed_types: Object.keys(builtinPermissions).filter(type => builtinPermissions[type].includes(key)),
+  })),
+};
