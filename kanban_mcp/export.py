@@ -6,6 +6,7 @@ Provides multi-format export functionality
 """
 
 import json
+from kanban_mcp.attribution import update_fields, author
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
@@ -128,6 +129,8 @@ class ExportBuilder:
             updates = self.db.get_updates(self.project_id, limit=100)
             export_data["updates"] = self._serialize_updates(updates)
 
+        from kanban_mcp.columns import read
+        export_data['column_configuration'] = read(self.db, self.project_id)
         return export_data
 
     def _process_item(
@@ -242,6 +245,7 @@ class ExportBuilder:
             {
                 "id": u['id'],
                 "content": u['content'],
+                "attribution": update_fields(u),
                 "created_at": self._serialize_datetime(u.get('created_at')),
                 "item_ids": u.get('item_ids', [])
             }
@@ -412,7 +416,18 @@ def format_markdown(data: Dict[str, Any], detailed: bool = False) -> str:
                     created = dt.strftime("%Y-%m-%d %H:%M")
                 except (ValueError, TypeError):
                     pass
-            content = update.get('content', '')
+            identity = update.get('attribution') or {}
+            attribution = author(identity)
+            metadata = []
+            if identity.get('source_client'):
+                metadata.append(identity['source_client'])
+            if identity.get('chat_id'):
+                metadata.append('chat ' + identity['chat_id'])
+            if identity.get('chat_title'):
+                metadata.append('title ' + identity['chat_title'])
+            if metadata:
+                attribution += ' (' + '; '.join(metadata) + ')'
+            content = attribution + ': ' + update.get('content', '')
             item_ids = update.get('item_ids', [])
             if item_ids:
                 items_str = ', '.join(f"#{i}" for i in item_ids)

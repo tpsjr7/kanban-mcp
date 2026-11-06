@@ -8,14 +8,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='update-attribution.css') }}">
 </head>
 <body>
+<script defer src="/static/workflow.js"></script>
+    <script>window.kanbanColumns = {{ column_config|tojson }};</script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='columns.css') }}">
+    <script defer src="{{ url_for('static', filename='columns.js') }}"></script>
     <header class="app-bar">
         <div class="app-title">
             <i class="material-icons">view_kanban</i>
             Kanban Board
         </div>
         <div class="app-bar-controls">
+            {% if current_project %}<button type="button" id="manage-columns">Columns</button>{% endif %}
             <div class="project-select-wrapper">
                 <select class="project-select" onchange="window.location.href='/?project=' + this.value">
                     <option value="">Select project...</option>
@@ -60,7 +66,7 @@
         {% for status in statuses %}
         <div class="column">
             <div class="column-header">
-                <span class="column-title">{{ status }}</span>
+                <span class="column-title">{{ column_config.columns|selectattr('key', 'equalto', status)|map(attribute='label')|first }}</span>
                 <span class="column-count">{{ items_by_status.get(status, [])|length }}</span>
             </div>
             <div class="column-content" data-status="{{ status }}"
@@ -319,7 +325,7 @@
                 </div>
             </div>
             <div class="modal-body">
-                <input type="hidden" id="edit-id">
+                <input type="hidden" id="edit-id"><section id="workflow-details"></section>
                 <div class="form-group">
                     <label class="form-label">Title</label>
                     <input type="text" class="form-input" id="edit-title">
@@ -682,6 +688,8 @@
         const PROJECT_ID = '{{ current_project }}';
         const PROJECT_DIR = '{{ current_project_dir }}';
     </script>
+    <script src="{{ url_for('static', filename='browser-time.js') }}"></script>
+    <script src="{{ url_for('static', filename='update-attribution.js') }}"></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
     <script src="{{ url_for('static', filename='dragdrop.js') }}"></script>
     <script src="{{ url_for('static', filename='timeline.js') }}"></script>

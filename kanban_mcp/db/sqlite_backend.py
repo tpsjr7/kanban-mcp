@@ -3,6 +3,7 @@
 import logging
 import os
 import sqlite3
+from kanban_mcp.attribution import update_fields
 import threading
 from contextlib import contextmanager
 from datetime import datetime
@@ -81,6 +82,9 @@ class SQLiteBackend(DatabaseBackend):
                 conn.execute('PRAGMA journal_mode=WAL')
             conn.execute('PRAGMA foreign_keys=ON')
             conn.execute('PRAGMA busy_timeout=5000')
+            from kanban_mcp.team_runtime import browser_user
+            conn.create_function('kanban_browser_user', 0, browser_user.get)
+            conn.create_function('kanban_workflow_write', 0, lambda: 0)
             self._local.conn = conn
         return conn
 
@@ -155,7 +159,7 @@ class SQLiteBackend(DatabaseBackend):
 
             # Search updates
             cursor.execute("""
-                SELECT u.id, u.content, u.created_at
+                SELECT u.*
                 FROM updates u
                 WHERE u.project_id = ?
                   AND u.content LIKE ? ESCAPE '\\'
@@ -171,7 +175,8 @@ class SQLiteBackend(DatabaseBackend):
                     'id': row['id'],
                     'snippet': snippet,
                     'score': 1.0,
-                    'created_at': row['created_at']
+                    'created_at': row['created_at'],
+                    'attribution': update_fields(row)
                 })
 
         return {

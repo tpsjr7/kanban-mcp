@@ -4,14 +4,12 @@
  */
 
 // Valid statuses per item type (matching kanban_mcp.py workflows)
-const TYPE_STATUSES = {
-    'issue': ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'],
-    'feature': ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'],
-    'epic': ['backlog', 'todo', 'in_progress', 'review', 'done', 'closed'],
-    'todo': ['backlog', 'todo', 'in_progress', 'done'],
-    'diary': ['done'],
-    'question': ['backlog', 'review', 'closed']
-};
+const TYPE_STATUSES = {};
+for (const column of window.kanbanColumns.columns) {
+    for (const type of column.allowed_types) {
+        (TYPE_STATUSES[type] ||= []).push(column.key);
+    }
+}
 
 // State
 let draggedCard = null;

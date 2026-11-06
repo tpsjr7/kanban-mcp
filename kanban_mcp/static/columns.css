@@ -1,0 +1,42 @@
+.columns-dialog {
+    width: min(640px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+    box-sizing: border-box;
+    overflow: auto;
+    color: var(--md-sys-color-on-surface, #eee);
+    background: var(--md-sys-color-surface, #202124);
+    border: 1px solid #666;
+    border-radius: 12px;
+    padding: 16px;
+}
+.columns-dialog::backdrop { background: #0009; }
+.columns-dialog button, .columns-dialog select, .columns-dialog input {
+    font: inherit;
+    min-height: 44px;
+}
+.columns-dialog button { cursor: pointer; }
+.columns-row { border-bottom: 1px solid #666; padding: 12px 0; }
+.columns-row-header { display: flex; gap: 4px; }
+.columns-row-header input { width: 0; min-width: 0; flex: 1; }
+.columns-types { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.columns-types label { display: flex; align-items: center; gap: 4px; }
+.columns-types input { margin: 0; }
+.columns-dialog > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
+.columns-dialog button, #manage-columns {
+    color: var(--text-high-emphasis);
+    background: var(--md-sys-color-surface-variant);
+    border: 1px solid var(--text-disabled);
+    border-radius: var(--border-radius-sm);
+    padding: 8px 12px;
+}
+.columns-dialog button:disabled { opacity: 0.4; cursor: default; }
+.columns-dialog input:not([type='checkbox']), .columns-dialog select {
+    color: var(--text-high-emphasis);
+    background: var(--md-sys-color-background);
+    border: 1px solid var(--text-disabled);
+    border-radius: var(--border-radius-sm);
+    padding: 8px;
+}
+.columns-dialog input:disabled { opacity: 0.65; }
+.columns-dialog input[type='checkbox'] { accent-color: var(--md-sys-color-primary); }
+.columns-dialog [role='alert'] { color: var(--md-sys-color-error); }

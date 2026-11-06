@@ -1,0 +1,42 @@
+.update-attribution {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+    color: var(--text-medium-emphasis);
+}
+.update-author, .update-chat-details code {
+    overflow-wrap: anywhere;
+}
+.update-chat {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    min-width: 0;
+}
+.update-chat summary {
+    cursor: pointer;
+    color: var(--md-sys-color-primary);
+}
+.update-chat-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    max-width: min(28rem, calc(100vw - 48px));
+    border: 1px solid var(--md-sys-color-surface-variant);
+    border-radius: 8px;
+    background: var(--md-sys-color-surface);
+}
+.timeline-entry-header {
+    flex-wrap: wrap;
+}
+/* Keep the existing activity drawer within phone viewports. */
+.timeline-drawer {
+    width: min(400px, 100vw);
+}
+.search-result-meta .update-attribution {
+    margin-inline-start: 8px;
+}

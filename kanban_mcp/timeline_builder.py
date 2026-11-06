@@ -5,6 +5,7 @@ Aggregates activity from multiple sources into a unified timeline.
 """
 
 import logging
+from kanban_mcp.attribution import update_fields, author
 from datetime import datetime
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
@@ -160,28 +161,30 @@ class TimelineBuilder:
         with self.db._db_cursor(dictionary=True) as cursor:
             if item_id:
                 # Get updates linked to specific item
-                cursor.execute("""
-                    SELECT u.id, u.content, u.created_at, ui.item_id
+                cursor.execute(self.db._sql("""
+                    SELECT u.id, u.content, u.created_at, ui.item_id,
+                           u.source_client, u.browser_username, u.chat_id, u.chat_title, u.agent_name
                     FROM updates u
                     JOIN update_items ui ON u.id = ui.update_id
                     WHERE ui.item_id = %s
                     ORDER BY u.created_at DESC
                     LIMIT %s
-                """, (item_id, limit))
+                """), (item_id, limit))
             elif project_id:
                 # Get all updates for project
-                cursor.execute("""
+                cursor.execute(self.db._sql("""
                     SELECT u.id, u.content,
                            u.created_at,
+                           u.source_client, u.browser_username, u.chat_id, u.chat_title, u.agent_name,
                            GROUP_CONCAT(ui.item_id)
                                as linked_items
                     FROM updates u
                     LEFT JOIN update_items ui ON u.id = ui.update_id
                     WHERE u.project_id = %s
-                    GROUP BY u.id, u.content, u.created_at
+                    GROUP BY u.id, u.content, u.created_at, u.source_client, u.browser_username, u.chat_id, u.chat_title, u.agent_name
                     ORDER BY u.created_at DESC
                     LIMIT %s
-                """, (project_id, limit))
+                """), (project_id, limit))
             else:
                 return []
 
@@ -221,10 +224,11 @@ class TimelineBuilder:
                 'title': f"Update: {truncated}",
                 'details': {
                     'update_id': update['id'],
+                    'attribution': update_fields(update),
                     'content': content,
                     'linked_items': parsed_linked
                 },
-                'actor': None,
+                'actor': author(update),
                 'icon': ACTIVITY_ICONS['update'],
                 'color': ACTIVITY_COLORS['update']
             }

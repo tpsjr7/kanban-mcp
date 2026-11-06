@@ -161,7 +161,7 @@ function renderTimeline(entries) {
     // Group entries by date
     const groupedByDate = {};
     entries.forEach(entry => {
-        const date = entry.timestamp.split('T')[0];
+        const date = KanbanTime.dayKey(entry.timestamp);
         if (!groupedByDate[date]) {
             groupedByDate[date] = [];
         }
@@ -239,6 +239,9 @@ function createTimelineEntryElement(entry) {
             openEditModal(entry.item_id);
         };
         headerEl.appendChild(itemLink);
+    }
+    if (entry.activity_type === 'update') {
+        headerEl.appendChild(KanbanAttribution.element(entry.details?.attribution || {}));
     }
     contentEl.appendChild(headerEl);
 
@@ -339,18 +342,7 @@ function showTimelineEmpty(message) {
  * @returns {string} Formatted date
  */
 function formatDateLabel(dateStr) {
-    const date = new Date(dateStr);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    if (dateStr === today.toISOString().split('T')[0]) {
-        return 'Today';
-    } else if (dateStr === yesterday.toISOString().split('T')[0]) {
-        return 'Yesterday';
-    } else {
-        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    }
+    return KanbanTime.dayLabel(dateStr);
 }
 
 /**
@@ -359,7 +351,7 @@ function formatDateLabel(dateStr) {
  * @returns {string} Formatted time
  */
 function formatTime(timestamp) {
-    const date = new Date(timestamp);
+    const date = KanbanTime.parse(timestamp);
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 

@@ -6,6 +6,7 @@ import sys
 
 from flask import Flask, render_template, request, jsonify, Response
 from kanban_mcp.core import KanbanDB
+from kanban_mcp.attribution import browser_identity
 from kanban_mcp.export import (
     ExportBuilder,
     export_to_format,
@@ -273,6 +274,7 @@ def api_create_item():
         item_id = db.create_item(
             project_id, item_type, title,
             description, priority, complexity,
+            status_name=data.get('status') or None,
             parent_id=parent_id,
         )
         return jsonify({
@@ -317,11 +319,13 @@ def api_create_update():
     if not content:
         return jsonify({'success': False, 'error': 'content required'}), 400
 
-    update_id = db.add_update(
-        project_id, content,
-        item_ids if item_ids else None,
-    )
-    return jsonify({'success': True, 'update_id': update_id}), 201
+    try:
+        identity = browser_identity(request.authorization)
+    except ValueError as error:
+        return jsonify({'success': False, 'error': str(error)}), 401
+    update_id = db.add_update(project_id, content, item_ids or None, identity)
+    return jsonify({'success': True, 'update_id': update_id,
+                    'attribution': identity}), 201
 
 
 @app.route('/api/projects/<project_id>', methods=['DELETE'])
@@ -715,7 +719,7 @@ def get_all_relationships(project_id):
         cursor.execute(db._sql("""
             SELECT r.source_item_id, r.target_item_id, r.relationship_type,
                    si.title as source_title, ti.title as target_title,
-                   ss.name as source_status, ts.name as target_status
+                   CASE WHEN ss.name='done' AND EXISTS(SELECT 1 FROM ticket_runs tr WHERE tr.item_id=si.id) THEN 'Integration pending' ELSE ss.name END as source_status, CASE WHEN ts.name='done' AND EXISTS(SELECT 1 FROM ticket_runs tr WHERE tr.item_id=ti.id) THEN 'Integration pending' ELSE ts.name END as target_status
             FROM item_relationships r
             JOIN items si ON r.source_item_id = si.id
             JOIN items ti ON r.target_item_id = ti.id
@@ -880,12 +884,15 @@ def index():
                 current_project_dir = p['directory_path']
                 break
 
+    from kanban_mcp.columns import read
+    column_config = read(db, current_project) if current_project else {'columns': [], 'revision': 0}
     return render_template(
         'index.html',
         projects=projects,
         current_project=current_project,
         current_project_dir=current_project_dir,
-        statuses=STATUSES,
+        statuses=[c['key'] for c in column_config['columns']],
+        column_config=column_config,
         items_by_status=items_by_status,
         relationships=relationships,
         epic_progress=epic_progress
@@ -991,6 +998,38 @@ def main():
             )
             app.run(host=args.host, port=args.port)
 
+
+
+@app.errorhandler(__import__('sqlite3').IntegrityError)
+def column_integrity_error(error):
+    return jsonify({'error': str(error)}), 409
+
+@app.route('/api/projects/<project_id>/columns', methods=['GET', 'PUT'])
+def api_columns(project_id):
+    from kanban_mcp.columns import read, save
+    try:
+        if request.method == 'GET':
+            return jsonify(read(db, project_id))
+        return jsonify(save(db, project_id, request.get_json()))
+    except (ValueError, KeyError, TypeError) as error:
+        return jsonify({'error': str(error)}), 409
+
+
+@app.before_request
+def workflow_browser_context():
+    from kanban_mcp.team_runtime import browser_user
+    # nginx validates Basic Auth. Only username is retained; never credentials.
+    browser_user.set(request.authorization.username if request.authorization else None)
+
+@app.teardown_request
+def workflow_clear_context(error):
+    from kanban_mcp.team_runtime import browser_user
+    browser_user.set(None)
+
+@app.route('/api/projects/<project_id>/workflow')
+def workflow_details(project_id):
+    from kanban_mcp.team_runtime import snapshot
+    return jsonify(snapshot(db, project_id))
 
 if __name__ == '__main__':
     main()

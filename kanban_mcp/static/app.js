@@ -908,7 +908,7 @@ async function loadItemDecisions(itemId) {
             // Timestamp
             const timestamp = document.createElement('div');
             timestamp.className = 'decision-timestamp';
-            timestamp.textContent = new Date(decision.created_at).toLocaleString();
+            timestamp.textContent = KanbanTime.parse(decision.created_at).toLocaleString();
             content.appendChild(timestamp);
 
             row.appendChild(content);
@@ -1086,6 +1086,7 @@ async function openEditModal(itemId) {
         // Load decision history
         await loadItemDecisions(itemId);
 
+        await window.KanbanWorkflow?.load(itemId);
         openModal('edit-modal');
     } catch (err) {
         showToast(err.message, 'error');
@@ -1535,7 +1536,8 @@ function renderSearchResults(data, container) {
 
             const meta = document.createElement('div');
             meta.className = 'search-result-meta';
-            meta.textContent = update.created_at ? new Date(update.created_at).toLocaleString() : '';
+            meta.textContent = update.created_at ? KanbanTime.parse(update.created_at).toLocaleString() : '';
+            meta.appendChild(KanbanAttribution.element(update));
             row.appendChild(meta);
 
             const snippet = document.createElement('div');
@@ -1686,8 +1688,9 @@ function renderSemanticSearchResults(data, container) {
             const meta = document.createElement('div');
             meta.className = 'search-result-meta';
             const simText = Math.round(update.similarity * 100) + '% match';
-            const dateText = update.created_at ? new Date(update.created_at).toLocaleString() : '';
+            const dateText = update.created_at ? KanbanTime.parse(update.created_at).toLocaleString() : '';
             meta.textContent = dateText ? `${simText} • ${dateText}` : simText;
+            meta.appendChild(KanbanAttribution.element(update));
             row.appendChild(meta);
 
             const snippet = document.createElement('div');

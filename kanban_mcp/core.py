@@ -793,30 +793,10 @@ class KanbanDB:
         return {"success": True, "item": updated_item}
 
     def add_update(self, project_id: str, content: str,
-                   item_ids: List[int] = None) -> int:
-        """Add an update, optionally linked to items. Returns update id."""
-        with self._db_cursor(commit=True) as cursor:
-            cursor.execute(
-                self._sql(
-                    "INSERT INTO updates"
-                    " (project_id, content) VALUES (%s, %s)"),
-                (project_id, content)
-            )
-            update_id = cursor.lastrowid
-
-            if item_ids:
-                for item_id in item_ids:
-                    cursor.execute(
-                        self._sql(
-                            "INSERT INTO update_items"
-                            " (update_id, item_id)"
-                            " VALUES (%s, %s)"),
-                        (update_id, item_id))
-
-        # Auto-generate embedding
-        self._safe_embedding_op('upsert_embedding', 'update', update_id)
-
-        return update_id
+                   item_ids: List[int] = None, attribution: Dict = None) -> int:
+        """Atomically store an update with its source identity and links."""
+        from kanban_mcp.attribution import store_update
+        return store_update(self, project_id, content, item_ids, attribution)
 
     def get_latest_update(self, project_id: str) -> Optional[Dict]:
         """Get most recent update for a project."""
@@ -1024,7 +1004,7 @@ class KanbanDB:
                 JOIN statuses s ON i.status_id = s.id
                 WHERE r.target_item_id = %s
                   AND r.relationship_type = 'blocks'
-                  AND s.name NOT IN ('done', 'closed')
+                  AND (s.name NOT IN ('done', 'closed') OR (s.name='done' AND EXISTS (SELECT 1 FROM ticket_runs tr WHERE tr.item_id=i.id)))
 
                 UNION
 
@@ -1036,7 +1016,7 @@ class KanbanDB:
                 JOIN statuses s ON i.status_id = s.id
                 WHERE r.source_item_id = %s
                   AND r.relationship_type = 'depends_on'
-                  AND s.name NOT IN ('done', 'closed')
+                  AND (s.name NOT IN ('done', 'closed') OR (s.name='done' AND EXISTS (SELECT 1 FROM ticket_runs tr WHERE tr.item_id=i.id)))
             """), (item_id, item_id))
             return cursor.fetchall()
 
@@ -1096,7 +1076,8 @@ class KanbanDB:
         incomplete_items = []
 
         for d in descendants:
-            if d['status_name'] in ('done', 'closed'):
+            from kanban_mcp.team_runtime import effectively_complete
+            if effectively_complete(self, d['id'], d['status_name']):
                 completed += 1
             else:
                 incomplete_items.append(d['id'])
@@ -1220,6 +1201,12 @@ class KanbanDB:
                 and progress['completed'] == progress['total']):
             # Only auto-advance if not already in review or beyond
             if parent['status_name'] not in ('review', 'done', 'closed'):
+                from kanban_mcp.columns import read
+                permitted = any(c['key'] == 'review' and 'epic' in c['allowed_types']
+                                for c in read(self, parent['project_id'])['columns'])
+                from kanban_mcp.team_runtime import is_managed
+                if not permitted or is_managed(self, parent['id']):
+                    return
                 # Use internal method to avoid recursion through set_status
                 old_status_id = parent['status_id']
                 new_status_id = self.get_status_id('review')
@@ -2461,6 +2448,11 @@ class KanbanMCPServer:
                 "The server will start but some features may not work. "
                 "Fix the issue above and restart.")
 
+        from kanban_mcp.attribution import ensure_schema
+        ensure_schema(self.db)
+        from kanban_mcp.team_runtime import ensure_schema as ensure_teams
+        ensure_teams(self.db)
+
         # Current project state
         self.current_project_id = None
         self.current_project_path = None
@@ -2585,7 +2577,7 @@ class KanbanMCPServer:
         def new_item(item_type: str, title: str,
                      description: str = "", priority: int = 3,
                      complexity: int = 0,
-                     parent_id: int = 0,
+                     parent_id: int = 0, status: str = "",
                      ) -> Dict[str, Any]:
             """Create a new issue, todo, feature, epic,
             or diary entry for current project."""
@@ -2597,6 +2589,7 @@ class KanbanMCPServer:
                 description=description if description else None,
                 priority=priority,
                 complexity=complexity if complexity else None,
+                status_name=status or None,
                 parent_id=parent_id if parent_id else None
             )
             item = self.db.get_item(item_id)
@@ -2703,14 +2696,53 @@ class KanbanMCPServer:
         # --- Updates/Progress ---
 
         @self.tool("add_update")
-        def add_update(content: str, item_ids: str = "") -> Dict[str, Any]:
-            """Add a progress update, optionally linked
-            to items (comma-separated IDs)."""
+        def add_update(content: str, client: str, chat_id: str,
+                       item_ids: str = "", agent_name: str = "",
+                       chat_title: str = "") -> Dict[str, Any]:
+            """Add an attributed update. client: codex or opencode;
+            chat_id: exact current thread/session ID (opaque string).
+            Supply agent_name, or current chat_title as its fallback.
+            item_ids optionally links comma-separated ticket IDs.
+            Identity is per call; never guess a session or reuse another chat.
+            """
+            from kanban_mcp.attribution import agent_identity
+            identity = agent_identity(client, chat_id, agent_name, chat_title)
             project_id = self._get_project_id()
-            linked_ids = [int(x.strip()) for x in item_ids.split(
-                ',') if x.strip()] if item_ids else None
-            update_id = self.db.add_update(project_id, content, linked_ids)
-            return {"success": True, "update_id": update_id}
+            linked = [int(value.strip()) for value in item_ids.split(',')
+                      if value.strip()] if item_ids else None
+            update_id = self.db.add_update(project_id, content, linked, identity)
+            return {"success": True, "update_id": update_id, "attribution": identity}
+
+        @self.tool("workflow_status")
+        def workflow_status() -> Dict[str, Any]:
+            """Inspect registered teams, assignments and dispatches."""
+            from kanban_mcp.team_runtime import snapshot
+            return snapshot(self.db, self._get_project_id())
+
+        @self.tool("workflow_assign")
+        def workflow_assign(chat_id: str, item_id: int, team: str, worker: str) -> Dict[str, Any]:
+            """Registered manager assigns a Needs Plan ticket to an available worker.
+            Caller-supplied identity is attribution, not authentication.
+            """
+            from kanban_mcp.team_runtime import assign
+            return assign(self.db, self._get_project_id(), chat_id, item_id, team, worker)
+
+        @self.tool("workflow_report")
+        def workflow_report(client: str, chat_id: str, dispatch_id: str,
+                            kind: str, payload: str = "{}") -> Dict[str, Any]:
+            """Report assigned work: started, plan_ready, preview_ready, integrated,
+            stopped or failed. payload is JSON. Host verifies evidence before advancing.
+            Always use exact current client/session identity and dispatch ID.
+            """
+            import json
+            from kanban_mcp.team_runtime import report
+            return report(self.db, client, chat_id, dispatch_id, kind, json.loads(payload))
+
+        @self.tool("list_columns")
+        def list_columns() -> Dict[str, Any]:
+            """Discover project columns, stable status keys, allowed types and progression order."""
+            from kanban_mcp.columns import read
+            return read(self.db, self._get_project_id())
 
         @self.tool("get_latest_update")
         def get_latest_update() -> Dict[str, Any]:
@@ -3413,3 +3445,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+from kanban_mcp.columns import install as install_columns
+install_columns(KanbanDB)
