@@ -218,8 +218,13 @@ it through Backlog → Needs Plan so the manager receives a fresh planning reque
 Returning an unassigned planning request to Backlog cancels its queued dispatch
 and releases the request without waiting for a nonexistent worker. After the
 supervisor processes that withdrawal, Backlog → Needs Plan creates one fresh
-request at the current revision. Assigned work returned to Backlog still requires the worker's stop
-acknowledgment and verified owner-scoped release before re-entry.
+request at the current revision. Assigned work can also return from Backlog to
+Needs Plan while retaining its worker/team. The browser records that planning
+request even if the withdrawal's stop is pending; planning waits for the exact
+current stop acknowledgment and integration-lease resolution. A rapid round trip
+before the supervisor consumes the withdrawal is preserved. A later scope edit
+invalidates the request. Explicit owner-scoped release remains available when
+operator intent is to return the ticket to manager reassignment instead.
 
 Moving assigned work directly back to Needs Plan preserves the team and instance
 claim. After the current cancellation's stop report is verified, the supervisor

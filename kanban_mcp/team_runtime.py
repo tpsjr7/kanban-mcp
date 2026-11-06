@@ -192,8 +192,15 @@ def resume_requested_planning(c, project):
               'JOIN statuses origin ON origin.id=e.old_status '
               "WHERE i.project_id=? AND s.name='needs_plan' AND r.phase='stopped' "
               "AND r.cancel_pending=0 AND destination.name='needs_plan' "
-              "AND origin.name!='backlog' AND e.browser_user IS NOT NULL "
-              'AND e.consumed=1 AND e.revision=r.revision-1 '
+              'AND e.browser_user IS NOT NULL AND e.consumed=1 AND ('
+              "(origin.name!='backlog' AND e.revision=r.revision-1) OR "
+              "(origin.name='backlog' AND (e.revision=r.revision OR (e.revision=r.revision-1 "
+              'AND EXISTS(SELECT 1 FROM workflow_events withdrawal '
+              'JOIN statuses withdrawn ON withdrawn.id=withdrawal.new_status '
+              'WHERE withdrawal.id=(SELECT max(prior.id) FROM workflow_events prior '
+              'WHERE prior.item_id=e.item_id AND prior.id<e.id) '
+              "AND withdrawn.name='backlog' AND withdrawal.browser_user IS NOT NULL "
+              'AND withdrawal.consumed=1 AND withdrawal.revision=e.revision))))) '
               'AND NOT EXISTS(SELECT 1 FROM workflow_events newer '
               'WHERE newer.item_id=r.item_id AND newer.id>e.id) '
               'AND NOT EXISTS(SELECT 1 FROM integration_lease l WHERE l.item_id=r.item_id) '
@@ -233,7 +240,18 @@ def consume(db, project):
             run = c.fetchone()
             old, new = event['old_key'], event['new_key']
             if run and event['revision'] != run['revision']:
-                continue
+                quick_return = False
+                if (event['browser_user'] and old == 'backlog' and new == 'needs_plan'
+                        and run['worker'] and event['revision'] == run['revision'] - 1):
+                    c.execute('SELECT e.*,s.name AS destination FROM workflow_events e '
+                              'JOIN statuses s ON s.id=e.new_status WHERE e.item_id=? AND e.id<? '
+                              'ORDER BY e.id DESC LIMIT 1', (item, event['id']))
+                    preceding = c.fetchone()
+                    quick_return = bool(preceding and preceding['browser_user']
+                                        and preceding['destination'] == 'backlog'
+                                        and preceding['revision'] == event['revision'])
+                if not quick_return:
+                    continue
             if event['browser_user'] and old == 'backlog' and new == 'needs_plan':
                 if status(c, item)['status'] != 'needs_plan':
                     continue
@@ -241,7 +259,10 @@ def consume(db, project):
                 c.execute("UPDATE ticket_runs SET phase='queued',reason=NULL WHERE item_id=? "
                           "AND phase='released' AND team IS NULL AND worker IS NULL AND cancel_pending=0",
                           (item,))
-                dispatch(c, item, json.loads(settings['manager']), 'assign', event['revision'])
+                if not run or not run['worker']:
+                    dispatch(c, item, json.loads(settings['manager']), 'assign', event['revision'])
+                # Retained assignments resume only via the verified-stop
+                # reconciliation below; never send them to another team.
             elif run and event['browser_user'] and old == 'plan_review' and new == 'todo':
                 if run['plan_hash'] and not run['cancel_pending']:
                     c.execute("UPDATE ticket_runs SET plan_approved=revision,phase='todo' WHERE item_id=?", (item,))

@@ -332,6 +332,61 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn('events', result)
         server.db._backend._get_connection().close()
 
+    def test_retained_backlog_reentry_waits_for_verified_stop(self):
+        d = self.assigned()
+        self.report(d, 'started')
+        self.human_move('backlog')
+        cancel = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'cancel')
+        self.human_move('needs_plan')
+        pending = r.consume(self.db, self.project)
+        self.assertFalse(any(x['kind'] in ('plan', 'assign') for x in pending))
+        self.report(cancel, 'stopped')
+        plans = [x for x in r.consume(self.db, self.project) if x['kind'] == 'plan']
+        self.assertEqual(len(plans), 1)
+        self.assertEqual((plans[0]['worker'], plans[0]['revision']), (self.worker, 1))
+        self.assertEqual(len([x for x in r.consume(self.db, self.project) if x['kind'] == 'plan']), 1)
+
+    def test_rapid_retained_backlog_roundtrip_preserves_request(self):
+        from kanban_mcp import workflow_views as v
+        d = self.assigned()
+        self.report(d, 'started')
+        self.human_move('backlog')
+        self.human_move('needs_plan')
+        cancel = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'cancel')
+        self.report(cancel, 'stopped')
+        plan = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'plan')
+        r.host_action(self.db, 'delivery', {'id': plan['id'], 'state': 'delivered'})
+        self.assertTrue(v.check(self.db, self.project, plan['id'])['current'])
+        self.assertEqual(plan['revision'], cancel['revision'])
+
+    def test_retained_reentry_does_not_approve_later_scope_or_bypass_lease(self):
+        d = self.assigned()
+        self.report(d, 'started')
+        self.human_move('backlog')
+        cancel = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'cancel')
+        self.human_move('needs_plan')
+        r.consume(self.db, self.project)
+        with self.db._db_cursor(commit=True) as c:
+            c.execute('UPDATE items SET title=? WHERE id=?', ('New scope after request', self.item))
+        cancel = next(x for x in r.consume(self.db, self.project)
+                      if x['kind'] == 'cancel' and x['revision'] == 2)
+        self.report(cancel, 'stopped')
+        self.assertFalse(any(x['kind'] == 'plan' for x in r.consume(self.db, self.project)))
+
+    def test_retained_reentry_still_waits_for_integration_lease_resolution(self):
+        d = self.assigned()
+        self.report(d, 'started')
+        self.human_move('backlog')
+        cancel = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'cancel')
+        self.human_move('needs_plan')
+        r.host_action(self.db, 'lease', {'item_id': self.item})
+        try:
+            self.report(cancel, 'stopped')
+            self.assertFalse(any(x['kind'] == 'plan' for x in r.consume(self.db, self.project)))
+        finally:
+            with r.transaction(self.db, trusted=True) as c:
+                c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
+
     def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
         self.human_move('needs_plan')
         dispatch = r.consume(self.db, self.project)[0]
@@ -414,16 +469,14 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual((run['phase'], run['cancel_pending'], run['reason']), ('released', 0, None))
         self.assertEqual(self.db.get_item(self.item)['status_name'], 'backlog')
 
-    def test_assigned_request_requires_stop_and_release_before_reentry(self):
+    def test_explicit_release_after_stop_still_allows_manager_reassignment(self):
         d = self.assigned()
         self.report(d, 'started')
         self.human_move('backlog')
         cancellation = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'cancel')
-        with self.assertRaises(Exception):
-            self.human_move('needs_plan')
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'release', {'item_id': self.item})
         self.report(cancellation, 'stopped')
-        with self.assertRaises(Exception):
-            self.human_move('needs_plan')
         r.host_action(self.db, 'release', {'item_id': self.item})
         self.human_move('needs_plan')
         pending = r.consume(self.db, self.project)

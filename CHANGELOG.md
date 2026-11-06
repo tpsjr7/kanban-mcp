@@ -1,3 +1,10 @@
+# Unreleased: retained-assignment planning re-entry
+
+- Migration 009 permits human Backlog → Needs Plan requests for retained workers.
+- Keep planning blocked until the exact stop is verified and no integration lease
+  remains. Preserve rapid browser round trips without approving later scope edits.
+- Retain the original assignment and existing explicit-release/reassignment path.
+
 # Unreleased: two-check startup and inline retry
 
 - Batch host identity, instance claim, Git and approval evidence checks in
