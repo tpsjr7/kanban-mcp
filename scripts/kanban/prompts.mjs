@@ -48,10 +48,15 @@ with your runtime identity, revision and stage; stop on blockers.
 2. Run npm run --silent kanban -- automation preflight ${id} --client YOUR_CLIENT
 through the required Docker/host escalation on the first attempt. It batches
 runtime identity, checkout claim, Git state and applicable plan/commit checks.
-Then begin the assigned work. The checkpoint already contains ticket workflow,
-plan and preview references: do not also call workflow_ticket or get_item unless
-specific task content is missing. Do not reread unchanged guides or search known
-command implementations. Required task investigation/tests are additional work.
+Then begin the assigned work. The checkpoint contains workflow state and plan/preview
+references, not the ticket description or acceptance criteria. If task content is
+not already available, call get_item({item_id:${item}}) and read it before planning
+or implementing. This is normal task investigation, not another startup check.
+Missing content in workflow_check or workflow_ticket is expected, not a blocker;
+do not stop, request another dispatch or repeat workflow_ticket for that content.
+Only report missing requirements if get_item itself is empty, inaccessible or
+ambiguous. Do not reread unchanged guides or search known command implementations.
+Required task investigation/tests are additional work.
 Recheck workflow_check before integration or after a material state change, not
 between every read. Confirm pending report verification at a real checkpoint;
 do not poll while waiting. Reconnect MCP if focused tools are unavailable.

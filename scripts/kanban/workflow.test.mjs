@@ -49,7 +49,8 @@ test('dispatches carry exact revision, deduplication and stage-scoped authority'
   assert.match(planning, /Routine startup has exactly two checks/);
   assert.match(planning, /automation preflight dispatch-123/);
   assert.match(planning, /automation retry 9 --inline dispatch-123/);
-  assert.match(planning, /do not also call workflow_ticket/i);
+  assert.match(planning, /call get_item\(\{item_id:9\}\)/);
+  assert.match(planning, /do not stop, request another dispatch or repeat workflow_ticket/);
   assert.match(planning, /Do not routinely call\s+full workflow_status/);
   const manager = promptFor({ ...d, kind: 'assign' }, {}, {}, []);
   assert.match(manager, /Routine manager startup has exactly two checks/);

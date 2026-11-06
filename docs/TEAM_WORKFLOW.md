@@ -155,8 +155,15 @@ npm run --silent kanban -- automation preflight EXACT_DISPATCH_ID --client codex
 ```
 
 Do not follow the first check with `workflow_ticket` just to reread the same data.
-Use that tool only for a standalone ticket lookup, and `get_item` only when specific
-content is missing. Normal task investigation and required tests remain necessary.
+Use that tool only for a standalone workflow lookup. The compact tools intentionally
+omit the ticket description and acceptance criteria. If that task content is not
+already available, call `get_item(item_id)` and read it before planning or
+implementing. This is normal investigation, not an extra startup safety check.
+Do not stop, request another dispatch or repeat `workflow_ticket` because its
+response lacks task content. Report a requirements blocker only after `get_item`
+itself is empty, inaccessible or genuinely ambiguous. For OpenCode, use Code Mode
+`execute` with `tools["kanban"]["get_item"]({ item_id: assignedItemID })`.
+Normal task investigation and required tests remain necessary.
 Use returned report states and the retained checkpoint to avoid repeating completed
 steps. Recheck before integration and after material state changes, rather than
 between every read. Do not reread unchanged guides or search implementations of
@@ -188,6 +195,9 @@ const checkpoint = await tools["kanban"]["workflow_check"]({
 });
 // Stop on blockers or an exact-target mismatch.
 // Run the batched host preflight next; do not also fetch workflow_ticket.
+// If the task description/acceptance criteria are not already available:
+// await tools["kanban"]["get_item"]({ item_id: assignedItemID });
+// Missing descriptions in the compact checkpoint are expected, not a blocker.
 // Manager only: tools["kanban"]["workflow_queue"]({ limit: 20, offset: 0 });
 await tools["kanban"]["workflow_report"]({
   client: "opencode", chat_id: exactSessionID, dispatch_id: assignedDispatchID,

@@ -1,3 +1,10 @@
+# Unreleased: fetch missing task content
+
+- Require workers to call get_item when the description or acceptance criteria
+  are unavailable. Compact workflow responses omit those fields intentionally.
+- Clarify Codex/OpenCode guidance: fetch content before reporting a blocker;
+  do not stop, repeat workflow_ticket or request a new dispatch for the omission.
+
 # Unreleased: distinguish manager and worker startup
 
 - Manager assignment prompts use workflow_check plus workflow_queue before a
