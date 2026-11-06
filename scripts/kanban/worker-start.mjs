@@ -19,6 +19,12 @@ export async function workerPreflight(root, dispatchId, client, options = {}, de
     throw new Error('Workflow blocked: ' + check.blockers.join(', '));
   }
   const ticket = check.ticket;
+  if (check.dispatch.kind === 'assign') {
+    if (options.failed) throw new Error('Manager assignments use workflow_queue and workflow_assign, not worker inline retry');
+    return { ready: true, role: 'manager', client, chat_id: chatId,
+      dispatch_id: dispatchId, item_id: ticket.item_id, revision: ticket.revision,
+      next: 'workflow_queue_then_workflow_assign', worker_instance_required: false };
+  }
   if (!ticket.instance || !ticket.worker) throw new Error('Assigned worker instance required');
   const instance = await io.instanceInfo(root, ticket.instance);
   const owner = io.claimOwner(instance.worktree);

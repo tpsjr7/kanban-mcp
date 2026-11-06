@@ -41,7 +41,7 @@ test('real preflight and inline retry stay in-turn for both clients without a da
         const state = join(root, 'instances/state', instance);
         await mkdir(state, { recursive: true });
         await writeFile(join(state, 'manifest.json'), JSON.stringify({ worktree }));
-        const fixture = runPython(`
+        const request = runPython(`
 import os,json
 from kanban_mcp.core import KanbanDB
 from kanban_mcp.setup import auto_migrate
@@ -49,7 +49,7 @@ from kanban_mcp import team_runtime as r
 client=os.environ['TEST_CLIENT']; chat=os.environ['TEST_ID']; team='local-'+client
 db=KanbanDB(); auto_migrate(db._backend); project=db.ensure_project('/test/worker-inline')
 r.setup(db,project)
-r.configure(db,project,'manager_set',{'identity':{'client':'codex','chat_id':'manager'}})
+r.configure(db,project,'manager_set',{'identity':{'client':client,'chat_id':'manager-'+chat}})
 r.configure(db,project,'team_add',{'name':team,'instance':team})
 r.configure(db,project,'worker_add',{'team':team,'identity':{'client':client,'chat_id':chat}})
 r.configure(db,project,'arm',{})
@@ -57,16 +57,34 @@ item=db.create_item(project,'feature','Fixture')
 token=r.browser_user.set('human')
 try: db.set_status(item,'needs_plan')
 finally: r.browser_user.reset(token)
-r.consume(db,project)
-ack=r.assign(db,project,'manager',item,team,client+':'+chat)
-r.host_action(db,'delivery',{'id':ack['dispatch_id'],'state':'delivered'})
-print(json.dumps(ack))`, { TEST_CLIENT: client, TEST_ID: id });
+dispatch=next(d for d in r.consume(db,project) if d['kind']=='assign')
+r.host_action(db,'delivery',{'id':dispatch['id'],'state':'delivered'})
+print(json.dumps({'item_id':item,'dispatch_id':dispatch['id']}))`, { TEST_CLIENT: client, TEST_ID: id });
         const env = { ...process.env, KANBAN_WORKSPACE: root, KANBAN_MCP_IMAGE: image,
           KANBAN_MCP_VOLUME: volume, KANBAN_PROJECT_DIR: '/test/worker-inline',
           KANBAN_ADAPTER: join(runtime, 'tests/fixture-adapter.mjs'),
           CODEX_THREAD_ID: id, OPENCODE_SESSION_ID: id };
         const cli = args => JSON.parse(command(process.execPath,
           [join(runtime, 'scripts/kanban.mjs'), 'automation', ...args], { env }));
+        const managerEnv = { ...env, CODEX_THREAD_ID: 'manager-' + id,
+          OPENCODE_SESSION_ID: 'manager-' + id };
+        const manager = JSON.parse(command(process.execPath,
+          [join(runtime, 'scripts/kanban.mjs'), 'automation', 'preflight', request.dispatch_id,
+            '--client', client], { env: managerEnv }));
+        assert.equal(manager.ready, true);
+        assert.equal(manager.role, 'manager');
+        assert.equal(manager.worker_instance_required, false);
+        const fixture = runPython(`
+import os,json
+from kanban_mcp.core import KanbanDB
+from kanban_mcp import team_runtime as r
+db=KanbanDB()
+project=db.ensure_project('/test/worker-inline')
+client=os.environ['TEST_CLIENT']
+chat=os.environ['TEST_ID']
+ack=r.assign(db,project,'manager-'+chat,int(os.environ['TEST_ITEM']),'local-'+client,client+':'+chat)
+r.host_action(db,'delivery',{'id':ack['dispatch_id'],'state':'delivered'})
+print(json.dumps(ack))`, { TEST_CLIENT: client, TEST_ID: id, TEST_ITEM: request.item_id });
         const preflight = cli(['preflight', fixture.dispatch_id, '--client', client]);
         assert.equal(preflight.ready, true);
         assert.equal(preflight.owner, id);

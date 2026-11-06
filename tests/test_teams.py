@@ -387,6 +387,22 @@ class WorkflowTests(unittest.TestCase):
             with r.transaction(self.db, trusted=True) as c:
                 c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
 
+    def test_manager_check_is_current_before_assignment_and_rejects_replaced_manager(self):
+        from kanban_mcp import workflow_views as v
+        self.human_move('needs_plan')
+        d = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'assign')
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'delivered'})
+        self.assertTrue(v.check(self.db, self.project, d['id'])['current'])
+        self.assertIsNone(v.check(self.db, self.project, d['id'])['ticket']['worker'])
+        self.assertFalse(v.check(self.db, self.project, d['id'])['host_checks_required'])
+        r.configure(self.db, self.project, 'manager_set', {
+            'identity': {'client': 'codex', 'chat_id': 'replacement'}})
+        self.assertIn('manager_registration_changed', v.check(self.db, self.project, d['id'])['blockers'])
+        r.configure(self.db, self.project, 'manager_set', {
+            'identity': {'client': 'codex', 'chat_id': 'manager'}})
+        r.assign(self.db, self.project, 'manager', self.item, self.id(), self.worker)
+        self.assertIn('assignment_already_recorded', v.check(self.db, self.project, d['id'])['blockers'])
+
     def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
         self.human_move('needs_plan')
         dispatch = r.consume(self.db, self.project)[0]

@@ -130,6 +130,16 @@ completion; Closed does. Unmanaged tickets retain ordinary column behavior.
 
 Use the focused MCP tools on canonical `/workspace/project`:
 
+Manager startup (`assign` dispatches) uses `workflow_check(dispatch_id)` followed
+by `workflow_queue`. At this stage, an empty team/worker/instance is expected.
+Do not run the worker host preflight, claim an instance, invoke worker inline
+retry or send `workflow_report`. Call `workflow_assign` only when a team and its
+registered worker are available; otherwise wait for a capacity-change dispatch.
+A legacy prompt calling host preflight receives a manager result directing it to
+the queue, without accessing any checkout. Current-manager identity, pause,
+revision and human-request checks still apply; an already-assigned request is
+not actionable. These rules apply to both Codex and OpenCode.
+
 Routine worker startup uses two checks:
 
 1. `workflow_check(dispatch_id)`: compare the exact target client/chat ID, stage and

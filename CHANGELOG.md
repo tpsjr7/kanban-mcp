@@ -1,3 +1,11 @@
+# Unreleased: distinguish manager and worker startup
+
+- Manager assignment prompts use workflow_check plus workflow_queue before a
+  worker exists; do not require worker host preflight or worker reports.
+- Legacy manager preflight returns its role and next action without inspecting
+  an instance. Worker ownership and evidence checks remain required.
+- Reject stale manager registrations and already-assigned manager dispatches.
+
 # Unreleased: discover rotating per-user desktop sockets
 
 - Discover legacy and per-user app-tools directories dynamically from the UID.

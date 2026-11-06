@@ -35,6 +35,25 @@ test('one host preflight batches identity, claim, Git and plan for both clients'
   }
 });
 
+test('manager preflight needs identity and current dispatch but never a worker instance', async () => {
+  for (const client of ['codex', 'opencode']) {
+    const { io, check } = fixture(client);
+    check.dispatch.kind = 'assign';
+    check.ticket.instance = null;
+    check.ticket.worker = null;
+    const forbidden = () => { throw new Error('Manager must not inspect a worker checkout'); };
+    const managerIO = { ...io, instanceInfo: forbidden, claimOwner: forbidden,
+      command: forbidden, hashPlan: forbidden };
+    const result = await workerPreflight('/root', 'assign-id', client, {}, managerIO);
+    assert.equal(result.ready, true);
+    assert.equal(result.role, 'manager');
+    assert.equal(result.worker_instance_required, false);
+    assert.equal(result.next, 'workflow_queue_then_workflow_assign');
+    check.blockers = ['automation_disabled_or_paused'];
+    await assert.rejects(workerPreflight('/root', 'assign-id', client, {}, managerIO), /blocked/);
+  }
+});
+
 test('preflight rejects missing identity, foreign claims, changed plans and reviewed commits', async () => {
   const { io, check } = fixture();
   await assert.rejects(workerPreflight('/root', 'd', 'codex', {}, { ...io, env: {} }), /missing/);

@@ -99,6 +99,14 @@ def check_cursor(c, project, dispatch_id):
             blockers.append('human_request_missing')
     target = json.loads(d.pop('target'))
     d['target'] = {key: target.get(key) for key in ('client', 'chat_id')}
+    if d['kind'] == 'assign':
+        c.execute('SELECT manager FROM orchestration_settings WHERE project_id=?', (project,))
+        configured = c.fetchone()
+        manager = json.loads(configured['manager']) if configured and configured['manager'] else {}
+        if {key: manager.get(key) for key in ('client', 'chat_id')} != d['target']:
+            blockers.append('manager_registration_changed')
+        if row['team'] is not None or row['worker'] is not None:
+            blockers.append('assignment_already_recorded')
     if d['worker']:
         c.execute('SELECT client,chat_id FROM team_workers WHERE project_id=? AND team=? AND id=?',
                   (project, row['team'], d['worker']))
@@ -115,7 +123,7 @@ def check_cursor(c, project, dispatch_id):
     return {'found': True, 'current': not blockers, 'blockers': blockers,
             'automation': automation, 'dispatch': d, 'ticket': ticket_summary(row),
             'human_request': origin, 'reports': reports,
-            'host_checks_required': True}
+            'host_checks_required': d['kind'] != 'assign'}
 
 def queue(db, project, limit=20, offset=0):
     if not 1 <= limit <= 100 or offset < 0:
