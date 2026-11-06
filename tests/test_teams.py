@@ -403,6 +403,74 @@ class WorkflowTests(unittest.TestCase):
         r.assign(self.db, self.project, 'manager', self.item, self.id(), self.worker)
         self.assertIn('assignment_already_recorded', v.check(self.db, self.project, d['id'])['blockers'])
 
+    def test_candidate_attempt_boundaries_identity_and_completion_are_verified(self):
+        self.reviewed()
+        self.human_move('done')
+        d = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'integrate')
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'delivered'})
+        r.host_action(self.db, 'lease', {'item_id': self.item})
+        record = {'id': 'attempt-' + self.id(), 'dispatch_id': d['id'],
+                  'approved': 'a' * 40, 'owner': self.id(), 'client': 'codex', 'policy': 'verified-candidate-v1',
+                  'phase': 'prepared'}
+        try:
+            with self.assertRaises(ValueError):
+                r.host_action(self.db, 'candidate_record', {'record': {**record, 'owner': 'foreign'}})
+            r.host_action(self.db, 'candidate_record', {'record': record})
+            with self.assertRaises(ValueError):
+                r.host_action(self.db, 'candidate_record', {'record': {**record, 'phase': 'cleaned'}})
+            for phase in ['proof_verified', 'tested', 'quiesce_pending', 'quiesced', 'publishing', 'installed',
+                          'restart_pending', 'restarted', 'cleanup_pending', 'cleaned']:
+                record = {**record, 'phase': phase, 'candidate': 'b' * 40,
+                          'tree': 'c' * 40, 'main': 'd' * 40, 'base': 'e' * 40}
+                r.host_action(self.db, 'candidate_record', {'record': record})
+            with self.assertRaises(ValueError):
+                self.report(d, 'integrated')
+            with self.db._db_cursor(dictionary=True) as c:
+                c.execute("SELECT id FROM workflow_reports WHERE dispatch_id=? AND kind='integrated'", (d['id'],))
+                report_id = c.fetchone()['id']
+            r.host_action(self.db, 'verify_report', {'id': report_id,
+                          'candidate_id': record['id'], 'candidate_commit': record['candidate']})
+            self.assertEqual(self.db.get_item(self.item)['status_name'], 'closed')
+            import sqlite3
+            import json
+            with tempfile.TemporaryDirectory() as directory:
+                restored = sqlite3.connect(str(Path(directory) / 'restore.db'))
+                self.db._backend._get_connection().backup(restored)
+                self.assertEqual(restored.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+                self.assertEqual(restored.execute('PRAGMA foreign_key_check').fetchall(), [])
+                saved = restored.execute('SELECT phase,record FROM integration_attempts WHERE id=?', (record['id'],)).fetchone()
+                self.assertEqual(saved[0], 'cleaned')
+                self.assertEqual(json.loads(saved[1])['candidate'], record['candidate'])
+                restored.close()
+        finally:
+            with r.transaction(self.db, trusted=True) as c:
+                c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
+
+    def test_resolution_review_preserves_plan_and_requires_trusted_verification(self):
+        self.reviewed()
+        self.human_move('done')
+        dispatch = next(d for d in r.consume(self.db, self.project) if d['kind'] == 'integrate')
+        r.host_action(self.db, 'delivery', {'id': dispatch['id'], 'state': 'delivered'})
+        r.host_action(self.db, 'lease', {'item_id': self.item})
+        payload = {'commit': 'b' * 40, 'preview': 'https://local-d.flippyface.com'}
+        try:
+            with self.assertRaises(ValueError):
+                self.report(dispatch, 'resolution_ready', payload)
+            with self.db._db_cursor(dictionary=True) as c:
+                c.execute("SELECT id FROM workflow_reports WHERE dispatch_id=? AND kind='resolution_ready'",
+                          (dispatch['id'],))
+                report_id = c.fetchone()['id']
+            r.host_action(self.db, 'verify_report', {'id': report_id, 'resolution_verified': True})
+            run = r.snapshot(self.db, self.project)['tickets'][0]
+            self.assertEqual(self.db.get_item(self.item)['status_name'], 'review')
+            self.assertEqual(run['commit_hash'], 'b' * 40)
+            self.assertIsNone(run['merge_approved'])
+            self.assertEqual(run['plan_hash'], 'hash')
+            self.assertEqual(run['plan_approved'], run['revision'])
+        finally:
+            with r.transaction(self.db, trusted=True) as c:
+                c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
+
     def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
         self.human_move('needs_plan')
         dispatch = r.consume(self.db, self.project)[0]

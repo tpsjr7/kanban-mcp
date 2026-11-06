@@ -2760,7 +2760,7 @@ class KanbanMCPServer:
         def workflow_report(client: str, chat_id: str, dispatch_id: str,
                             kind: str, payload: str = "{}") -> Dict[str, Any]:
             """Report assigned work: started, plan_ready, preview_ready, integrated,
-            stopped or failed. payload is JSON. Host verifies evidence before advancing.
+            resolution_ready, stopped or failed. payload is JSON. Host verifies evidence before advancing.
             Always use exact current client/session identity and dispatch ID.
             """
             import json

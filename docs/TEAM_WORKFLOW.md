@@ -319,3 +319,49 @@ Creator identity is saved when the plan is verified, so later worker changes
 do not redirect it. Historical plans retain their stored path without guessed
 authors. Plan contents stay out of the ticket panel; review them in the creator
 chat. Internal snapshots and hashes remain available for approval validation.
+
+## Verified integration candidates
+
+The opt-in `verified-candidate-v1` adapter policy separates approved task commit
+A from integration commit C. Ordinary queue merges retain exact-commit behavior.
+Only explicitly enabled tickets may use this route. The host adapter supplies policy activation and runtime verification.
+
+Codex and OpenCode keep the same two startup checks and exact per-call identity.
+An integration worker joins the primary merge queue for A, then approves its
+fixed operation with `--kanban-dispatch DISPATCH_ID`, the recorded browser
+approval source, and the approved restart mode/flags. Run the queue normally.
+Never merge main into A merely to make it fast-forward. The adapter constructs C
+with parents main B and A, independently proves the complete tree, prepares C's
+own test environment and runs the combined full suite before primary changes.
+The adapter explicitly allowlists any zero-context documentation exception.
+
+The publisher locks an expected-B ref transaction, verifies clean files, and
+stops verified primary readers before updating mounted source for a full restart.
+Frontend/deferred modes require proven immutable readers and matching scope.
+Dirty files, failed proof/checks, changed approval/claim and uncertain state stop
+publication. A changed B permits one fresh proof and full test attempt.
+
+Successful output supplies `candidate_commit`, `candidate_evidence` and
+`restart_evidence`. Include these with `health: true` and `cleanup: true` in the
+ordinary `workflow_report` integrated payload. Host verification requires the
+cleaned attempt, C's exact parents/tree/tests, real restart health, synchronized
+unlocked instance and public health before Closed. A remains the approved task.
+
+Recovery uses the canonical primary command
+`node scripts/kanban-candidate.mjs inspect JOURNAL`. Preserve claims and leases;
+never reset primary, delete locks or blindly restart. Once the previous runner is
+proven stopped, the exact assigned worker may choose `retry-tests`,
+`reconcile-quiesce`, `reconcile-publication`, `reconcile-restart`, or
+`reconcile-cleanup` with that journal. Each action checks physical evidence.
+`reconcile-journal` copies the authoritative database record after a lost local
+write; inspect again afterward. Partial/unknown publication needs manual
+reconciliation. Restart recovery requires the actual completed official-command
+receipt and fresh health. Cleanup recovery handles an already-unlocked,
+synchronized stopped instance and idempotent removal of the owned candidate
+checkout/ref; its printed integrated payload can be reported directly without
+rerunning a released claim. A cleaned attempt never starts another restart.
+
+A concrete same-plan resolution before publication uses `resolution_ready`,
+with a new clean commit, preview/check evidence and the failed candidate journal.
+Trusted verification returns it to Review, preserving the plan and instance but
+clearing merge approval. Changed scope or plan still requires planning approval.

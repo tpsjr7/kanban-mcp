@@ -120,7 +120,18 @@ def check_cursor(c, project, dispatch_id):
     c.execute('SELECT id,kind,state FROM workflow_reports WHERE dispatch_id=? ORDER BY id',
               (dispatch_id,))
     reports = c.fetchall()
+    integration = None
+    c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='integration_attempts'")
+    if c.fetchone():
+        c.execute('SELECT id,phase,record FROM integration_attempts WHERE dispatch_id=? '
+                  'ORDER BY updated_at DESC,rowid DESC LIMIT 1', (dispatch_id,))
+        attempt = c.fetchone()
+        if attempt:
+            details = json.loads(attempt['record'])
+            integration = {key: details.get(key) for key in
+                           ('id', 'phase', 'approved', 'main', 'candidate', 'artifact')}
     return {'found': True, 'current': not blockers, 'blockers': blockers,
+            'integration_candidate': integration,
             'automation': automation, 'dispatch': d, 'ticket': ticket_summary(row),
             'human_request': origin, 'reports': reports,
             'host_checks_required': d['kind'] != 'assign'}

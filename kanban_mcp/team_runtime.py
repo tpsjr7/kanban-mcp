@@ -347,7 +347,7 @@ def report(db, client, chat_id, dispatch_id, kind, payload):
             raise ValueError('Dispatch is stale')
         if kind == 'stopped' and d['kind'] != 'cancel':
             raise ValueError('Stopping requires a current cancellation dispatch')
-        if kind not in ('started', 'plan_ready', 'preview_ready', 'integrated', 'stopped', 'failed'):
+        if kind not in ('started', 'plan_ready', 'preview_ready', 'resolution_ready', 'integrated', 'stopped', 'failed'):
             raise ValueError('Unknown worker report')
         c.execute('SELECT id,state FROM workflow_reports WHERE dispatch_id=? AND kind=?', (dispatch_id, kind))
         existing = c.fetchone()
@@ -469,6 +469,53 @@ def host_action(db, action, data):
             c.execute('UPDATE ticket_runs SET reason=NULL WHERE item_id=?', (previous['item_id'],))
             return {'resumed': True, 'duplicate': False,
                     'checkpoint': check_cursor(c, previous['project_id'], child_id)}
+        elif action == 'candidate_read':
+            c.execute('SELECT record FROM integration_attempts WHERE id=?', (data['id'],))
+            row = c.fetchone()
+            if not row:
+                raise ValueError('Unknown integration attempt')
+            return json.loads(row['record'])
+        elif action == 'candidate_record':
+            from kanban_mcp.workflow_views import check_cursor
+            record = data['record']
+            c.execute('SELECT i.project_id FROM workflow_dispatches d JOIN items i ON i.id=d.item_id WHERE d.id=?',
+                      (record['dispatch_id'],))
+            project = c.fetchone()
+            if not project:
+                raise ValueError('Unknown integration dispatch')
+            check = check_cursor(c, project['project_id'], record['dispatch_id'])
+            if not check['current'] or check['dispatch']['kind'] != 'integrate':
+                raise ValueError('Current approved integration dispatch required')
+            if (check['ticket']['commit'] != record['approved']
+                    or check['dispatch']['target']['chat_id'] != record['owner']
+                    or record.get('client') != check['dispatch']['target']['client']
+                    or record['policy'] != 'verified-candidate-v1'):
+                raise ValueError('Candidate identity or approved task mismatch')
+            phases = ['prepared', 'proof_verified', 'tested', 'quiesce_pending', 'quiesced', 'publishing', 'installed',
+                      'restart_pending', 'restarted', 'cleanup_pending', 'cleaned']
+            if record['phase'] not in phases + ['abandoned']:
+                raise ValueError('Unknown candidate phase')
+            c.execute('SELECT * FROM integration_attempts WHERE id=?', (record['id'],))
+            previous = c.fetchone()
+            if previous:
+                old = json.loads(previous['record'])
+                for key in ('dispatch_id', 'approved', 'owner', 'policy'):
+                    if old[key] != record[key]:
+                        raise ValueError('Attempt identity changed')
+                abandon = record['phase'] == 'abandoned' and previous['phase'] in ('prepared', 'proof_verified', 'tested')
+                difference = (phases.index(record['phase']) - phases.index(previous['phase'])) if record['phase'] in phases and previous['phase'] in phases else -1
+                if not abandon and difference not in (0, 1):
+                    raise ValueError('Candidate phase must advance one verified boundary at a time')
+                for key in ('candidate', 'tree', 'main', 'base'):
+                    if old.get(key) and old[key] != record.get(key):
+                        raise ValueError('Proof inputs changed; create a new attempt')
+            if not previous and record['phase'] != 'prepared':
+                raise ValueError('New candidate attempts start prepared')
+            c.execute('INSERT INTO integration_attempts(id,dispatch_id,item_id,phase,record) VALUES(?,?,?,?,?) '
+                      'ON CONFLICT(id) DO UPDATE SET phase=excluded.phase,record=excluded.record,updated_at=CURRENT_TIMESTAMP',
+                      (record['id'], record['dispatch_id'], check['ticket']['item_id'],
+                       record['phase'], json.dumps(record)))
+            return {'recorded': True, 'id': record['id'], 'phase': record['phase']}
         elif action == 'block':
             c.execute('UPDATE ticket_runs SET reason=? WHERE item_id=?',
                       (data['reason'], data['item_id']))
@@ -536,7 +583,28 @@ def host_action(db, action, data):
                 c.execute("UPDATE ticket_runs SET preview=?,commit_hash=?,merge_approved=NULL,phase='review' WHERE item_id=?",
                           (payload['preview'], payload['commit'], item['id']))
                 move(c, item, 'review')
+            elif phase == 'resolution_ready':
+                if (p['dispatch_kind'] != 'integrate' or item['status'] != 'done'
+                        or run['merge_approved'] != run['revision']
+                        or not data.get('resolution_verified')):
+                    raise ValueError('Verified same-plan integration resolution required')
+                c.execute("SELECT 1 FROM integration_attempts WHERE dispatch_id=? AND phase NOT IN "
+                          "('prepared','proof_verified','tested','abandoned')", (p['dispatch_id'],))
+                if c.fetchone():
+                    raise ValueError('Reconcile publication/runtime before returning to review')
+                c.execute("UPDATE ticket_runs SET commit_hash=?,preview=?,merge_approved=NULL,phase='review' WHERE item_id=?",
+                          (payload['commit'], payload['preview'], item['id']))
+                move(c, item, 'review')
+                c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (item['id'],))
             elif phase == 'integrated':
+                c.execute('SELECT * FROM integration_attempts WHERE dispatch_id=? ORDER BY updated_at DESC LIMIT 1',
+                          (p['dispatch_id'],))
+                attempt = c.fetchone()
+                if attempt:
+                    candidate = json.loads(attempt['record'])
+                    if (attempt['phase'] != 'cleaned' or data.get('candidate_id') != attempt['id']
+                            or data.get('candidate_commit') != candidate.get('candidate')):
+                        raise ValueError('Verified candidate completion evidence required')
                 if p['dispatch_kind'] != 'integrate' or item['status'] != 'done':
                     raise ValueError('Not an integration dispatch')
                 if run['merge_approved'] != run['revision']:
@@ -564,7 +632,7 @@ def host_action(db, action, data):
                 c.execute('UPDATE ticket_runs SET reason=NULL WHERE item_id=?', (item['id'],))
             if phase == 'started':
                 c.execute('UPDATE ticket_runs SET phase=? WHERE item_id=?', (target, item['id']))
-            if phase in ('plan_ready', 'preview_ready', 'integrated'):
+            if phase in ('plan_ready', 'preview_ready', 'resolution_ready', 'integrated'):
                 c.execute("UPDATE workflow_dispatches SET state='completed' WHERE id=?", (p['dispatch_id'],))
         else:
             raise ValueError('Unknown host action')

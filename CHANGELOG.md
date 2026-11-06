@@ -1,3 +1,13 @@
+# Unreleased: verified integration candidates
+
+- Add independent exact-delta/merge-tree proof and immutable candidate parents.
+- Fence publication with an expected-old Git ref transaction and explicit
+  worktree/crash states; preserve dirty/untracked data and unknown outcomes.
+- Add migration 010 for private candidate phase/evidence records and require
+  verified candidate completion before closing those integration attempts.
+- Keep runtime quiescence, testing, restart and cleanup in the trusted adapter;
+  candidate scripts contain no music_gen/evaluation dependency.
+
 # Unreleased: fetch missing task content
 
 - Require workers to call get_item when the description or acceptance criteria

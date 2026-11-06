@@ -23,10 +23,17 @@ Report preview_ready with {preview,commit,checks:[{result:"passed",evidence:rela
 Do not merge.`,
     integrate: `The human moved Review to Done approving full gtg for
 commit ${run?.commit_hash}. Verify it is unchanged.
+If the trusted adapter explicitly enables verified-candidate-v1, preserve the
+approved task checkout and use the fixed coordination merge route with
+--kanban-dispatch ${id} when recording its approval. Do not merge advancing main
+into the reviewed task just to satisfy the old exact-commit runner. Candidate
+proof/test/conflict and recovery rules in the adapter still apply.
 Follow AGENTS.md gtg: required tests, integrate only task-owned changes, restart
 primary and check all required probes, clean up only this task, preserve and
 synchronize the named instance, release its matching claim.
 Report integrated with {health:true,cleanup:true,restart_evidence:relativePathInPrimary}.
+For candidate integration also include the actual candidate_commit and
+candidate_evidence path printed by the fixed runner. Never invent them.
 restart_evidence must be JSON from verified official restart results:
 {commit:currentMainHash,mode:"frontend" or "full",api:true,frontend:true,
 proxy:true,entry:true,restarted_at:ISO8601}.
