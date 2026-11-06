@@ -9,12 +9,26 @@ import struct
 import uuid
 
 
-def endpoint(proc_root=Path('/proc'), socket_prefix='/tmp/codex-app-tools/'):
+def socket_prefixes():
+    return ('/tmp/codex-app-tools/', f'/tmp/codex-app-tools-{os.getuid()}/')
+
+
+def endpoint(proc_root=Path('/proc'), socket_prefix=None):
+    # The desktop moved from a shared path to a per-UID directory. UUID
+    # filenames rotate on restart; only live listener ownership selects one.
+    prefixes = (socket_prefix,) if socket_prefix is not None else socket_prefixes()
+    # The shipped MCP adapter advertises this path. It is only a hint: the
+    # listener, desktop FD ownership and private permissions must still match.
+    advertised = os.environ.get('CODEX_APP_TOOLS_PIPE_PATH', '')
+    if not os.path.isabs(advertised):
+        advertised = ''
     candidates = []
     sockets = {}
     for line in (proc_root / 'net/unix').read_text().splitlines()[1:]:
         fields = line.split(maxsplit=7)
-        if len(fields) == 8 and fields[7].startswith(socket_prefix):
+        if (len(fields) == 8 and fields[3] == '00010000'
+                and fields[4] == '0001' and fields[5] == '01'
+                and (fields[7].startswith(prefixes) or fields[7] == advertised)):
             sockets['socket:[' + fields[6] + ']'] = fields[7]
     for process in proc_root.iterdir():
         if not process.name.isdigit():
@@ -26,15 +40,25 @@ def endpoint(proc_root=Path('/proc'), socket_prefix='/tmp/codex-app-tools/'):
             if not executable.endswith('/chatgpt/ChatGPT'):
                 continue
             for descriptor in (process / 'fd').iterdir():
-                path = sockets.get(os.readlink(descriptor))
-                if path and path not in candidates:
-                    info = Path(path).stat()
-                    if info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o600:
-                        candidates.append(path)
+                try:
+                    path = sockets.get(os.readlink(descriptor))
+                    if path and path not in candidates:
+                        socket_path = Path(path)
+                        info = socket_path.lstat()
+                        parent = socket_path.parent.lstat()
+                        if (stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid()
+                                and stat.S_IMODE(info.st_mode) == 0o600
+                                and stat.S_ISDIR(parent.st_mode) and parent.st_uid == os.getuid()
+                                and not parent.st_mode & 0o022):
+                            candidates.append(path)
+                except (OSError, ValueError):
+                    # Desktop IPC descriptors can close during enumeration.
+                    # Losing one must not hide its still-live listener.
+                    continue
         except (OSError, ValueError):
             continue
     if len(candidates) != 1:
-        raise RuntimeError('Desktop endpoint absent or ambiguous; no alternate server will be used')
+        raise RuntimeError('Desktop listener absent or ambiguous in this host namespace; no alternate server will be used')
     return candidates[0]
 
 

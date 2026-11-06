@@ -57,7 +57,7 @@ class FramingTests(unittest.TestCase):
                     listeners.append(listener)
                     (process / 'fd' / str(number)).symlink_to(f'socket:[{number}]')
                     with (root / 'net/unix').open('a') as output:
-                        output.write(f'0: 0 0 0 1 1 {number} {path}\n')
+                        output.write(f'0: 0 0 00010000 0001 01 {number} {path}\n')
                     if number == 1:
                         self.assertEqual(bridge.endpoint(root, directory), str(path))
                 with self.assertRaises(RuntimeError):
@@ -65,6 +65,99 @@ class FramingTests(unittest.TestCase):
             finally:
                 for listener in listeners:
                     listener.close()
+
+    def test_default_directories_follow_current_uid(self):
+        from unittest.mock import patch
+        with patch.object(bridge.os, 'getuid', return_value=4321):
+            self.assertEqual(bridge.socket_prefixes(),
+                             ('/tmp/codex-app-tools/', '/tmp/codex-app-tools-4321/'))
+
+    def test_uid_layout_rotation_is_selected_by_live_owner(self):
+        import os
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'net').mkdir()
+            process = root / '123'
+            (process / 'fd').mkdir(parents=True)
+            (process / 'exe').symlink_to('/usr/lib/chatgpt/ChatGPT')
+            parent = root / ('codex-app-tools-' + str(os.getuid()))
+            parent.mkdir(mode=0o700)
+            for generation in ('old', 'new'):
+                path = parent / (generation + '.sock')
+                with socket.socket(socket.AF_UNIX) as listener:
+                    listener.bind(str(path))
+                    path.chmod(0o600)
+                    descriptor = process / 'fd/1'
+                    descriptor.unlink(missing_ok=True)
+                    descriptor.symlink_to('socket:[10]')
+                    (root / 'net/unix').write_text(
+                        f'header\n0: 0 0 00010000 0001 01 10 {path}\n')
+                    # Prefixes use the real UID, not a fixed 1000, while this
+                    # fixture maps /tmp into its private temporary directory.
+                    with patch.object(bridge, 'socket_prefixes', return_value=(str(parent) + '/',)):
+                        self.assertEqual(bridge.endpoint(root), str(path))
+            # Old socket files remain, but only the live listener is considered.
+            self.assertTrue((parent / 'old.sock').exists())
+
+    def test_discovery_rejects_nonlistener_symlink_and_insecure_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'net').mkdir()
+            process = root / '123'
+            (process / 'fd').mkdir(parents=True)
+            (process / 'exe').symlink_to('/usr/lib/chatgpt/ChatGPT')
+            (process / 'fd/1').symlink_to('socket:[10]')
+            path = root / 'real.sock'
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(path))
+                path.chmod(0o600)
+                (root / 'net/unix').write_text(f'header\n0: 0 0 0 0001 03 10 {path}\n')
+                with self.assertRaises(RuntimeError):
+                    bridge.endpoint(root, directory)
+                link = root / 'link.sock'
+                link.symlink_to(path)
+                (root / 'net/unix').write_text(f'header\n0: 0 0 00010000 0001 01 10 {link}\n')
+                with self.assertRaises(RuntimeError):
+                    bridge.endpoint(root, directory)
+                (root / 'net/unix').write_text(f'header\n0: 0 0 00010000 0001 01 10 {path}\n')
+                root.chmod(0o777)
+                with self.assertRaises(RuntimeError):
+                    bridge.endpoint(root, directory)
+                root.chmod(0o700)
+                path.chmod(0o666)
+                with self.assertRaises(RuntimeError):
+                    bridge.endpoint(root, directory)
+                path.chmod(0o600)
+                (process / 'exe').unlink()
+                (process / 'exe').symlink_to('/usr/lib/chatgpt/resources/codex')
+                with self.assertRaises(RuntimeError):
+                    bridge.endpoint(root, directory)
+
+    def test_advertised_dynamic_path_is_only_a_verified_hint(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'net').mkdir()
+            process = root / '123'
+            (process / 'fd').mkdir(parents=True)
+            (process / 'exe').symlink_to('/usr/lib/chatgpt/ChatGPT')
+            # readlink raises for this vanished/invalid descriptor. Discovery
+            # must continue to the live listener rather than skip the process.
+            (process / 'fd/0').write_text('closed descriptor fixture')
+            (process / 'fd/1').symlink_to('socket:[10]')
+            path = root / 'generated.sock'
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(path))
+                path.chmod(0o600)
+                (root / 'net/unix').write_text(f'header\n0: 0 0 00010000 0001 01 10 {path}\n')
+                with patch.object(bridge, 'socket_prefixes', return_value=()), \
+                     patch.dict(bridge.os.environ, {'CODEX_APP_TOOLS_PIPE_PATH': str(path)}):
+                    self.assertEqual(bridge.endpoint(root), str(path))
+                    (process / 'exe').unlink()
+                    (process / 'exe').symlink_to('/usr/bin/unrelated')
+                    with self.assertRaises(RuntimeError):
+                        bridge.endpoint(root)
 
     def test_fragmented_success(self):
         self.assertEqual(self.run_response({'id':1,'result':{'tools':[]}}), {'tools':[]})

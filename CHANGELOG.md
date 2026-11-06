@@ -1,3 +1,11 @@
+# Unreleased: discover rotating per-user desktop sockets
+
+- Discover legacy and per-user app-tools directories dynamically from the UID.
+- Verify the desktop-advertised pipe path as a hint using live listener/process
+  ownership, socket type and private permissions; never select by recency.
+- Continue scanning after individual IPC descriptors close during enumeration.
+- Preserve compatibility checks, bounded calls and uncertain-send protection.
+
 # Unreleased: retained-assignment planning re-entry
 
 - Migration 009 permits human Backlog → Needs Plan requests for retained workers.

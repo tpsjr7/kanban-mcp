@@ -59,6 +59,13 @@ The supervisor inspects the existing writer's process without changing its lock.
 Desktop-owned Codex chats enter a durable `native_pending` queue; the app's native
 `send_message_to_thread` delivers them. CLI and OpenCode keep their existing routes.
 If ownership cannot be inspected, delivery stops rather than guessing a server.
+Discovery supports the legacy socket directory and the current per-user directory
+(`/tmp/codex-app-tools-<uid>/`). The desktop-advertised
+`CODEX_APP_TOOLS_PIPE_PATH` is a hint, accepted only when the live listener is
+owned by the current user's desktop process with private permissions. Socket
+UUIDs rotate; creation time, file recency and cached environment values never
+establish ownership. Inspect runtime processes from the actual host namespace;
+the executor sandbox may hide them.
 
 The standalone supervisor now delivers pending desktop messages directly through
 the verified desktop-owned Unix socket. It discovers the owned endpoint and uses
