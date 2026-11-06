@@ -1,8 +1,8 @@
 # Plan Review revision acceptance
 
 Updated: 2026-11-06. Owner: Kanban Agent.
-Status: implementation committed; isolated acceptance passed; deployment and
-fresh Codex/OpenCode end-to-end acceptance pending.
+Status: standalone acceptance passed; integrating host reports deployment and
+verified live Codex/OpenCode checks. Interactive visual browser review unavailable.
 
 ## Implementation
 
@@ -86,3 +86,23 @@ Client-source verification relies on local client records and operating-system
 ownership checks; it is not cryptographic proof of physical human presence.
 Workers must never create a prompt via an API to manufacture authorization, use
 agent/tool/delegated text, or substitute the newest session for an exact ID.
+
+## Host integration outcome
+
+After explicit authorization, the integrating host deployed migration 011 and
+verified real Codex and OpenCode Code Mode revisions against disposable live
+fixtures. Both edited Unicode plans, reported ready, repeated requests without
+duplicates, and read each other's persisted hashes after a web restart. Online
+backup restoration passed all-table fingerprints. Pending approval was blocked;
+post-ready gates were rehearsed without committing implementation authority.
+
+The host retained exact source validation after an OpenCode caller normalized
+escaped text incorrectly; a structured request then passed. The Codex test used
+a fixture-scoped relay and temporary per-tool settings instead of a rejected
+broad automatic-approval flag. No global settings were changed. The additional
+relay scope regressions passed (3 tests). Interactive browser automation was
+unavailable; rendered HTML and browser HTTP routes were checked instead.
+
+Host-specific deployment IDs, live ticket/session IDs, backups and detailed
+receipts are maintained by the integrating repository, outside this publishable
+project. Earlier pending-rollout statements above describe the isolated stage.

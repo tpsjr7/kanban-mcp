@@ -1,6 +1,7 @@
 # Revise a plan in Plan Review
 
-Status: implementation approved and completed; isolated acceptance passed; live rollout pending.
+Status: deployed by integrating host; live Codex/OpenCode checks passed;
+interactive visual browser review unavailable.
 Updated: 2026-11-06. Owner: Kanban Agent.
 
 ## Behavior
@@ -104,4 +105,5 @@ part of writing this plan.
 
 See [acceptance](PLAN_REVISIONS_ACCEPTANCE.md) for committed implementation IDs,
 isolated checks, actual source-message inspection and the remaining live rollout
-gates. The production board has not been migrated or restarted for this feature.
+gates. The integrating host subsequently deployed and verified the feature; host-specific
+live evidence remains in the integrating repository.

@@ -427,3 +427,28 @@ message after the latest plan was saved. A failed dispatched revision uses the
 existing exact-worker inline retry after a human requests resumption. Pause,
 withdrawal, scope changes and cancellation retain the normal verified-stop gates.
 Do not poll full workflow snapshots or begin code implementation from this flow.
+
+### Exact source text in OpenCode
+
+Do not manually retype or unescape a source message from a rendered tool result.
+The CLI may have stored quotes/backslashes as part of its actual message text.
+Extract the exact-message API field mechanically, then use the host request-file
+path; no newline or normalization should be added:
+
+```sh
+kanban_request_file="$(mktemp /tmp/kanban-request.XXXXXX)"
+opencode api GET "/api/session/${OPENCODE_SESSION_ID}/message/${kanban_message_id}" | \
+  python3 -c '
+import json
+import sys
+from pathlib import Path
+message = json.load(sys.stdin)["data"]["text"]
+Path(sys.argv[1]).write_text(message, encoding="utf-8")
+' "$kanban_request_file"
+```
+
+Use that private file as `--request-file`, then remove it after the request.
+`kanban_message_id` must already be the exact human message ID. For Code Mode,
+pass a parsed provider-response string directly rather than reconstructing it
+from displayed/escaped text. A mismatch is a blocker, not permission to relax
+validation; correct a rejected request with a fresh key as documented above.
