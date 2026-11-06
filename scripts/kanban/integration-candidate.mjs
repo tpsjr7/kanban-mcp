@@ -96,7 +96,7 @@ export function prepareCandidate({ repo, approved, directory, zeroContextPaths =
   git(repo, ['read-tree', main], { env: { ...process.env, GIT_INDEX_FILE: index } });
   const patches = [];
   const groups = [{ context: 3, paths: paths.filter(path => !zero.includes(path)) },
-    { context: 0, paths: zero }];
+    { context: 1, paths: zero }];
   for (const group of groups) {
     if (!group.paths.length) continue;
     const patch = git(repo, ['diff', '--binary', '--full-index', '--no-ext-diff', '--no-textconv',

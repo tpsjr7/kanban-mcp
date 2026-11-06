@@ -31,3 +31,12 @@ export function recoveryAction(phase, publication) {
   if (phase === 'cleaned' && publication === 'installed') return 'report-integrated';
   return 'inspect';
 }
+
+export async function recordAttempt(filename, attempt, phase, writeBoard) {
+  attempt.phase = phase;
+  attempt.updated_at = new Date().toISOString();
+  // The initial identity must survive even if the first board receipt is lost.
+  if (phase === 'prepared') saveJournal(filename, attempt);
+  await writeBoard(attempt);
+  saveJournal(filename, attempt);
+}

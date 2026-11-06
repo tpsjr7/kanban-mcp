@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { git, prepareCandidate, verifyCandidate } from './integration-candidate.mjs';
 import { publishCandidate, publicationState } from './integration-publication.mjs';
-import { saveJournal, readJournal } from './integration-journal.mjs';
-function fixture(t) {
+import { saveJournal, readJournal, recordAttempt } from './integration-journal.mjs';
+function fixture(t, withIndex = false) {
   const directory = mkdtempSync(join(tmpdir(), 'kanban-candidate-test-'));
   const repo = join(directory, 'repo');
   mkdirSync(repo);
@@ -14,16 +14,19 @@ function fixture(t) {
   git(repo, ['config', 'user.name', 'Fixture']);
   git(repo, ['config', 'user.email', 'fixture@localhost']);
   writeFileSync(join(repo, 'feature.txt'), 'base\n');
+  if (withIndex) writeFileSync(join(repo, 'index.md'), 'heading\nold row\nanchor\nfollowing\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-m', 'base']);
   git(repo, ['checkout', '-b', 'task']);
   writeFileSync(join(repo, 'feature.txt'), 'approved\n');
   writeFileSync(join(repo, 'added.txt'), 'approved addition\n');
+  if (withIndex) writeFileSync(join(repo, 'index.md'), 'heading\nold row\nanchor\ntask row\nfollowing\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-m', 'approved task']);
   const approved = git(repo, ['rev-parse', 'HEAD']).trim();
   git(repo, ['checkout', 'main']);
   writeFileSync(join(repo, 'unrelated.txt'), 'new main\n');
+  if (withIndex) writeFileSync(join(repo, 'index.md'), 'heading\nnew main row\nold row\nanchor\nfollowing\n');
   git(repo, ['add', '.']);
   git(repo, ['commit', '-m', 'unrelated main']);
   t.after(() => {
@@ -164,4 +167,32 @@ test('candidate cleanup is exact and idempotent after a completed installation',
   cleanupCandidate(f.repo, attempt);
   cleanupCandidate(f.repo, attempt);
   assert.equal(git(f.repo, ['rev-parse', 'HEAD']).trim(), attempt.candidate);
+});
+
+test('documentation exception retains an anchor when main shifts insertion lines', t => {
+  const f = fixture(t, true);
+  const candidate = prepareCandidate({ repo: f.repo, approved: f.approved,
+    directory: join(f.directory, 'anchored'), zeroContextPaths: ['index.md'],
+    validateZeroContext: ({ candidate }) => {
+      assert.equal(candidate, 'heading\nnew main row\nold row\nanchor\ntask row\nfollowing\n');
+    } });
+  assert.equal(candidate.patches.find(patch => patch.paths.includes('index.md')).context, 1);
+});
+
+test('initial identity survives a lost first board receipt without creating another attempt', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'kanban-journal-crash-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const filename = join(directory, 'attempt.json');
+  const attempt = { id: 'exact-attempt', dispatch_id: 'exact-dispatch' };
+  let board;
+  await assert.rejects(recordAttempt(filename, attempt, 'prepared', record => {
+    board = { ...record };
+    throw Error('crash after first board write');
+  }), /crash/);
+  assert.equal(readJournal(filename).id, board.id);
+  assert.equal(readJournal(filename).dispatch_id, board.dispatch_id);
+  await recordAttempt(filename, readJournal(filename), 'prepared', record => {
+    assert.equal(record.id, board.id);
+  });
+  assert.equal(readJournal(filename).phase, 'prepared');
 });
