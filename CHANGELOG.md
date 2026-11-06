@@ -1,3 +1,9 @@
+# Unreleased: managed ticket deletion
+
+- Add SQLite migration 008 to clean up workflow dependencies during item deletion.
+- Reject deletion of active assignments or integration leases, including active descendants, with a browser conflict response.
+- Preserve transactional rollback and unrelated tickets.
+
 # Changelog
 
 ## v0.2.0

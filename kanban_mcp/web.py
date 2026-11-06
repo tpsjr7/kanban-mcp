@@ -58,7 +58,12 @@ def api_delete_item(item_id):
     item = db.get_item(item_id)
     if not item:
         return jsonify({'success': False, 'error': 'Item not found'}), 404
-    result = db.delete_item(item_id)
+    try:
+        result = db.delete_item(item_id)
+    except Exception as error:
+        if 'Stop and release assigned work' in str(error):
+            return jsonify({'success': False, 'error': str(error)}), 409
+        raise
     return jsonify(result)
 
 

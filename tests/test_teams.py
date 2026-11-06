@@ -130,6 +130,47 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(run['worker'], self.worker)
         self.assertFalse(any(x['kind']=='cancel' for x in r.consume(self.db, self.project)))
 
+    def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
+        self.human_move('needs_plan')
+        dispatch = r.consume(self.db, self.project)[0]
+        self.human_move('backlog')
+        r.consume(self.db, self.project)
+        self.assertTrue(self.db.delete_item(self.item)['success'])
+        with self.db._db_cursor() as c:
+            c.execute('PRAGMA foreign_key_check')
+            self.assertEqual(c.fetchall(), [])
+            for table in ('ticket_runs', 'workflow_events', 'workflow_dispatches'):
+                c.execute('SELECT count(*) FROM ' + table + ' WHERE item_id=?', (self.item,))
+                self.assertEqual(c.fetchone()[0], 0)
+
+    def test_delete_closed_ticket_cleans_reports_and_preserves_other_tickets(self):
+        dispatch = self.assigned()
+        self.report(dispatch, 'started')
+        with r.transaction(self.db, trusted=True) as c:
+            c.execute("UPDATE ticket_runs SET phase='closed' WHERE item_id=?", (self.item,))
+        other = self.db.create_item(self.project, 'feature', 'Preserve unrelated ticket')
+        self.db.delete_item(self.item)
+        self.assertIsNotNone(self.db.get_item(other))
+        with self.db._db_cursor() as c:
+            c.execute('SELECT count(*) FROM workflow_reports WHERE dispatch_id=?', (dispatch['id'],))
+            self.assertEqual(c.fetchone()[0], 0)
+            c.execute('PRAGMA foreign_key_check')
+            self.assertEqual(c.fetchall(), [])
+
+    def test_parent_deletion_is_atomic_when_child_has_active_work(self):
+        dispatch = self.assigned()
+        parent = self.db.create_item(self.project, 'epic', 'Parent')
+        self.db.set_parent(self.item, parent)
+        with self.assertRaises(Exception):
+            self.db.delete_item(parent)
+        self.assertIsNotNone(self.db.get_item(parent))
+        self.assertIsNotNone(self.db.get_item(self.item))
+        self.assertTrue(any(d['id'] == dispatch['id'] for d in r.snapshot(self.db, self.project)['dispatches']))
+        from kanban_mcp import web
+        web.db = self.db
+        response = web.app.test_client().delete('/api/items/' + str(self.item))
+        self.assertEqual(response.status_code, 409)
+
     def test_submission_is_atomic_and_paused_dispatch_cannot_send(self):
         d = self.assigned()
         claimed = r.host_action(self.db, 'submitted', {'id': d['id']})
