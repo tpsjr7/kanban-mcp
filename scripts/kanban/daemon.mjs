@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { armPlanRevision, assertRevisionDelivery } from './plan-revision.mjs';
 import { promptFor } from './prompts.mjs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,6 +24,13 @@ while (!stopped) {
     const snapshot = await rpc.call('snapshot');
     const settings = snapshot.orchestration_settings[0];
     if (settings?.enabled && !settings.paused) {
+      for (const request of await rpc.call('plan_revision_pending')) {
+        try {
+          await armPlanRevision(root, request.id);
+        } catch (error) {
+          await rpc.call('host_plan_revision_reject', { id: request.id, reason: error.message });
+        }
+      }
       const availability = [];
       for (const team of snapshot.teams) {
         try {
@@ -51,6 +59,14 @@ while (!stopped) {
             if (owner && owner !== identity.chat_id) throw new Error('Assigned instance has a foreign claim');
             if (d.kind === 'plan' && !owner && command('git', ['-C', instance.worktree, 'status', '--porcelain']).trim()) {
               throw new Error('Unclaimed instance has work requiring review');
+            }
+            if (d.kind === 'revise_plan') {
+              const check = await rpc.call('workflow_check', { dispatch_id: d.id });
+              assertRevisionDelivery(check, 'queued');
+              if (owner !== identity.chat_id || (!check.plan_revision_request?.editing_started
+                  && await hashPlan(instance.worktree, run.plan) !== run.plan_hash)) {
+                throw Error('Plan revision owner/hash changed');
+              }
             }
             if (d.kind === 'implement' && (run.plan_approved !== run.revision ||
                 await hashPlan(instance.worktree, run.plan) !== run.plan_hash)) throw new Error('Plan approval is stale');

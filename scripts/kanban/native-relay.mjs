@@ -1,3 +1,4 @@
+import { assertRevisionDelivery } from './plan-revision.mjs';
 import { control } from './control.mjs';
 import { promptFor } from './prompts.mjs';
 import { instanceInfo, claimOwner, hashPlan } from './evidence.mjs';
@@ -39,6 +40,14 @@ export async function nativeRelay(root, verb, id) {
     if (dispatch.kind === 'plan' && !owner &&
         command('git', ['-C', manifest.worktree, 'status', '--porcelain']).trim()) {
       throw new Error('Unclaimed instance has work requiring review');
+    }
+    if (dispatch.kind === 'revise_plan') {
+      const check = control('workflow_check', { dispatch_id: dispatch.id });
+      assertRevisionDelivery(check, 'native_pending');
+      if (owner !== target.chat_id || (!check.plan_revision_request?.editing_started
+          && await hashPlan(manifest.worktree, run.plan) !== run.plan_hash)) {
+        throw Error('Plan revision owner/hash changed');
+      }
     }
     if (dispatch.kind === 'implement' || dispatch.kind === 'integrate') {
       if (await hashPlan(manifest.worktree, run.plan) !== run.plan_hash) throw new Error('Plan changed');

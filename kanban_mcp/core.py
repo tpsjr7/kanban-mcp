@@ -2756,6 +2756,21 @@ class KanbanMCPServer:
             from kanban_mcp.team_runtime import assign
             return assign(self.db, self._get_project_id(), chat_id, item_id, team, worker)
 
+        @self.tool("workflow_revise_plan")
+        def workflow_revise_plan(client: str, chat_id: str, item_id: int,
+                                 expected_revision: int, expected_hash: str,
+                                 message_id: str, request_text: str, request_key: str) -> Dict[str, Any]:
+            """Request plan edits while remaining in Plan Review. Exact assigned worker only.
+            Reference the exact human user message and its full text. Host verifies source,
+            plan and ownership before arming work. A pending request grants no authority.
+            Prefer the documented host CLI for same-turn verification and checkpoint.
+            """
+            from kanban_mcp.plan_revisions import request
+            return request(self.db, self._get_project_id(), {
+                'client': client, 'chat_id': chat_id, 'item_id': item_id,
+                'expected_revision': expected_revision, 'expected_hash': expected_hash,
+                'message_id': message_id, 'request_text': request_text, 'request_key': request_key})
+
         @self.tool("workflow_report")
         def workflow_report(client: str, chat_id: str, dispatch_id: str,
                             kind: str, payload: str = "{}") -> Dict[str, Any]:

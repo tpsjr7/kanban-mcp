@@ -7,3 +7,5 @@ export const claimOwner = implementation.claimOwner || missing;
 export const privatePath = implementation.privatePath || missing;
 export const hashPlan = implementation.hashPlan || missing;
 export const verifyReport = implementation.verifyReport || missing;
+
+export const verifyPlanRevision = implementation.verifyPlanRevision || missing;

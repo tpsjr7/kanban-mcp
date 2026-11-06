@@ -91,7 +91,7 @@ def request(path, method, params):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['read', 'send'])
+    parser.add_argument('action', choices=['read', 'history', 'send'])
     parser.add_argument('thread')
     parser.add_argument('--message')
     args = parser.parse_args()
@@ -101,11 +101,13 @@ def main():
         raise ValueError('Configure exact desktop caller identity first')
     path = endpoint()
     catalog = request(path, 'tools/list', {'threadStartKind': 'all'})['tools']
-    tool = 'read_thread' if args.action == 'read' else 'send_message_to_thread'
+    tool = 'read_thread' if args.action in ('read', 'history') else 'send_message_to_thread'
     if not any(row['name'] == tool and row['namespace'] == 'codex_app' for row in catalog):
         raise ValueError('Desktop tool catalog is incompatible')
     arguments = {'threadId': args.thread}
-    if args.action == 'read':
+    if args.action == 'history':
+        arguments.update(turnLimit=10, maxOutputCharsPerItem=16001)
+    elif args.action == 'read':
         arguments.update(turnLimit=1, maxOutputCharsPerItem=100)
     else:
         arguments['prompt'] = args.message
@@ -117,11 +119,16 @@ def main():
         raise RuntimeError(str(result))
     content = next(row['text'] for row in result['contentItems'] if row['type'] == 'inputText')
     value = json.loads(content)
-    if args.action == 'read':
+    if args.action in ('read', 'history'):
         thread = value['thread']
         if thread['id'] != args.thread:
             raise ValueError('Desktop target mismatch')
-        value = {'id': thread['id'], 'name': thread['title'], 'status': thread['status'], 'route': 'native-mcp'}
+        if args.action == 'history':
+            value = {'id': thread['id'], 'messages': [
+                {**item, 'source_time': turn.get('startedAt')} for turn in value.get('turns', []) for item in turn.get('items', [])
+                if item.get('type') == 'userMessage']}
+        else:
+            value = {'id': thread['id'], 'name': thread['title'], 'status': thread['status'], 'route': 'native-mcp'}
     elif value.get('threadId') != args.thread:
         raise ValueError('Send target mismatch; reconcile delivery')
     print(json.dumps(value))

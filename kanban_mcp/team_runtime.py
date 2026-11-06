@@ -264,7 +264,7 @@ def consume(db, project):
                 # Retained assignments resume only via the verified-stop
                 # reconciliation below; never send them to another team.
             elif run and event['browser_user'] and old == 'plan_review' and new == 'todo':
-                if run['plan_hash'] and not run['cancel_pending']:
+                if run['plan_hash'] and not run['cancel_pending'] and not run['plan_revision_pending']:
                     c.execute("UPDATE ticket_runs SET plan_approved=revision,phase='todo' WHERE item_id=?", (item,))
                     c.execute('SELECT * FROM team_workers WHERE id=?', (run['worker'],))
                     dispatch(c, item, c.fetchone(), 'implement', run['revision'], run['worker'])
@@ -364,7 +364,14 @@ def report(db, client, chat_id, dispatch_id, kind, payload):
 def host_action(db, action, data):
     """Private stdio-only host control; never exposed as an HTTP or MCP tool."""
     with transaction(db, trusted=True) as c:
-        if action == 'capacity':
+        if action == 'plan_revision_arm':
+            from kanban_mcp.plan_revisions import arm
+            return arm(c, data)
+        elif action == 'plan_revision_reject':
+            c.execute("UPDATE plan_revision_requests SET state='rejected',reason=? WHERE id=? AND state='pending'",
+                      (data['reason'], data['id']))
+            return {'rejected': bool(c.rowcount)}
+        elif action == 'capacity':
             project = data['project']
             encoded = json.dumps(sorted(data['available']))
             c.execute('SELECT * FROM orchestration_settings WHERE project_id=?', (project,))
@@ -443,7 +450,7 @@ def host_action(db, action, data):
                 return {'resumed': False, 'duplicate': True,
                         'checkpoint': check_cursor(c, previous['project_id'], child_id)}
             view = check_cursor(c, previous['project_id'], previous['id'])
-            if view['blockers'] != ['dispatch_failed'] or previous['kind'] not in ('plan', 'implement', 'integrate'):
+            if view['blockers'] != ['dispatch_failed'] or previous['kind'] not in ('plan', 'revise_plan', 'implement', 'integrate'):
                 raise ValueError('Inline retry requires a current failed worker dispatch with no other blockers')
             c.execute('SELECT id FROM workflow_dispatches WHERE item_id=? '
                       'ORDER BY created_at DESC,rowid DESC LIMIT 1', (previous['item_id'],))
@@ -543,10 +550,10 @@ def host_action(db, action, data):
             payload = json.loads(p['payload'])
             phase = p['kind']
             if phase == 'started':
-                if p['dispatch_kind'] not in ('plan', 'implement', 'integrate'):
+                if p['dispatch_kind'] not in ('plan', 'revise_plan', 'implement', 'integrate'):
                     raise ValueError('This dispatch only permits stopping')
                 allowed = {'plan': ('needs_plan', 'planning'),
-                           'implement': ('todo', 'in_progress'), 'integrate': ('done',)}
+                           'revise_plan': ('plan_review',), 'implement': ('todo', 'in_progress'), 'integrate': ('done',)}
                 if item['status'] not in allowed[p['dispatch_kind']]:
                     raise ValueError('Ticket stage no longer matches dispatch')
                 target = 'planning' if p['dispatch_kind'] == 'plan' else 'in_progress'
@@ -554,6 +561,10 @@ def host_action(db, action, data):
                     raise ValueError('Plan approval missing')
                 if p['dispatch_kind'] == 'integrate':
                     target = 'done'
+                if p['dispatch_kind'] == 'revise_plan':
+                    target = 'plan_review'
+                    c.execute('UPDATE plan_revision_requests SET editing_started=1 WHERE id=? AND state=\'active\'',
+                              (run['plan_revision_pending'],))
                 move(c, item, target)
                 tag = 'team:' + run['team']
                 c.execute('DELETE FROM item_tags WHERE item_id=? AND tag_id IN '
@@ -566,15 +577,27 @@ def host_action(db, action, data):
                           (item['id'], item['project_id'], tag))
                 c.execute("UPDATE workflow_dispatches SET state='acknowledged' WHERE id=?", (p['dispatch_id'],))
             elif phase == 'plan_ready':
-                if p['dispatch_kind'] != 'plan' or item['status'] != 'planning':
+                if not ((p['dispatch_kind'] == 'plan' and item['status'] == 'planning')
+                        or (p['dispatch_kind'] == 'revise_plan' and item['status'] == 'plan_review'
+                            and run['plan_revision_pending'])):
                     raise ValueError('Not a planning dispatch')
+                if p['dispatch_kind'] == 'revise_plan' and not data.get('revision_authority_verified'):
+                    raise ValueError('Revision human request must be reverified before saving')
                 creator = json.loads(p['creator'])
                 c.execute('UPDATE ticket_runs SET plan=?,plan_hash=?,plan_text=?,phase=?,plan_path=?,'
-                          'plan_client=?,plan_chat_id=?,plan_chat_title=? WHERE item_id=?',
+                          'plan_client=?,plan_chat_id=?,plan_chat_title=?,plan_saved_at=CURRENT_TIMESTAMP WHERE item_id=?',
                           (payload['plan'], data['plan_hash'], data.get('plan_text'), 'plan_review',
                            data.get('plan_path'), creator['client'], creator['chat_id'],
                            creator.get('title'), item['id']))
-                move(c, item, 'plan_review')
+                from kanban_mcp.plan_revisions import finish
+                if p['dispatch_kind'] == 'revise_plan':
+                    finish(c, run)
+                else:
+                    c.execute("UPDATE plan_revision_requests SET state='cancelled' WHERE item_id=? AND state='active'",
+                              (item['id'],))
+                    c.execute('UPDATE ticket_runs SET plan_revision_pending=NULL WHERE item_id=?', (item['id'],))
+                if item['status'] != 'plan_review':
+                    move(c, item, 'plan_review')
             elif phase == 'preview_ready':
                 if p['dispatch_kind'] != 'implement' or item['status'] != 'in_progress':
                     raise ValueError('Not an implementation dispatch')
@@ -623,7 +646,10 @@ def host_action(db, action, data):
                     raise ValueError('No current cancellation is pending')
                 c.execute("UPDATE workflow_dispatches SET state='completed' WHERE id=?",
                           (p['dispatch_id'],))
-                c.execute("UPDATE ticket_runs SET cancel_pending=0,phase='stopped' WHERE item_id=?", (item['id'],))
+                c.execute("UPDATE plan_revision_requests SET state='cancelled' WHERE item_id=? AND state='active'",
+                          (item['id'],))
+                c.execute("UPDATE ticket_runs SET cancel_pending=0,plan_revision_pending=NULL,phase='stopped' WHERE item_id=?",
+                          (item['id'],))
             elif phase == 'failed':
                 c.execute("UPDATE workflow_dispatches SET state='failed' WHERE id=?", (p['dispatch_id'],))
                 c.execute('UPDATE ticket_runs SET reason=? WHERE item_id=?', (payload.get('reason', 'Worker failed'), item['id']))
@@ -656,7 +682,8 @@ def ensure_schema(db):
         if len(c.fetchall()) != 4:
             raise RuntimeError('Team workflow migration incomplete; reconnect after upgrading')
         c.execute('SELECT event_id FROM workflow_dispatches LIMIT 0')
-        c.execute('SELECT plan_path,plan_client,plan_chat_id,plan_chat_title FROM ticket_runs LIMIT 0')
+        c.execute('SELECT plan_path,plan_client,plan_chat_id,plan_chat_title,plan_revision_pending FROM ticket_runs LIMIT 0')
+        c.execute('SELECT id,receipt FROM plan_revision_requests LIMIT 0')
 
 
 def is_managed(db, item_id):

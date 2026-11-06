@@ -82,3 +82,23 @@ test('inline retry uses runtime identity and one private atomic acknowledgment w
     await assert.rejects(retryInline('/root', 20, 'failed-id', client, io), /blocked/);
   }
 });
+
+test('plan-revision retry retains its claim and permits only previously authorized partial edits', async () => {
+  const check = { found: true, current: true, blockers: [],
+    dispatch: { kind: 'revise_plan', target: { client: 'opencode', chat_id: 'ses_exact' } },
+    ticket: { item_id: 1, instance: 'local', worker: 'worker', revision: 2,
+      plan: { path: 'docs/plan.md', hash: 'original' } }, reports: [],
+    plan_revision_request: { editing_started: 0 } };
+  const dependencies = {
+    env: { OPENCODE_SESSION_ID: 'ses_exact' }, control: () => check,
+    instanceInfo: async () => ({ worktree: '/fixture' }), claimOwner: () => 'ses_exact',
+    command: (_, args) => args.includes('status') ? '' : 'head',
+    hashPlan: async () => 'partially-edited',
+  };
+  await assert.rejects(workerPreflight('/fixture', 'dispatch', 'opencode', {}, dependencies), /before revision startup/);
+  check.plan_revision_request.editing_started = 1;
+  assert.equal((await workerPreflight('/fixture', 'dispatch', 'opencode', {}, dependencies)).ready, true);
+  await assert.rejects(workerPreflight('/fixture', 'dispatch', 'opencode', {}, {
+    ...dependencies, claimOwner: () => null,
+  }), /retain its exact/);
+});

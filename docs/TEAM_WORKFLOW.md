@@ -365,3 +365,65 @@ A concrete same-plan resolution before publication uses `resolution_ready`,
 with a new clean commit, preview/check evidence and the failed candidate journal.
 Trusted verification returns it to Review, preserving the plan and instance but
 clearing merge approval. Changed scope or plan still requires planning approval.
+
+## Revising a plan in Plan Review
+
+A direct human chat request can authorize the assigned worker to revise only the
+saved plan while the card stays in Plan Review. Retain the team, instance, claim
+and existing ticket commits. Do not move the card to Needs Plan or reuse its
+completed planning dispatch. Implementation still requires fresh browser
+Plan Review to Todo approval after the revised plan is verified.
+
+Read `workflow_ticket(item_id)` for its expected revision and plan hash. Obtain
+the exact current runtime ID and the human request's exact message ID/full text,
+including whitespace. Codex uses read_thread on its exact thread; the installed
+native history reader searches ten recent turns, failing closed if the ID is
+absent or content is truncated. CLI Codex uses its owning server's thread history.
+OpenCode reads `GET /api/session/EXACT_SESSION/message/EXACT_MESSAGE` via its
+configured API. Never choose the newest session or manufacture an authorization
+message with a prompt API. The recorded role must be user, not assistant/tool,
+synthetic or delegated content, and its time must not predate the saved plan.
+These checks inspect trusted local client records; they are not cryptographic
+proof of a human's physical presence. A caller-supplied source string alone
+cannot pass host verification.
+
+For same-turn work, save the exact source text in a private UTF-8 file and run:
+
+```sh
+npm run --silent kanban -- automation revise-plan ITEM_ID --client codex \
+  --revision EXPECTED_REVISION --hash EXACT_PLAN_HASH \
+  --message EXACT_HUMAN_MESSAGE_ID --request-file PRIVATE_FILE --key UNIQUE_KEY
+```
+
+OpenCode uses `--client opencode` and its exact `OPENCODE_SESSION_ID`. Run with
+host/Docker escalation on the first invocation. Request-file contents are data;
+never interpolate feedback as shell code. The result contains a fresh checkpoint
+and acknowledged `revise_plan` dispatch; compare its target to your runtime
+identity, then run the ordinary host preflight before editing. It does not send
+a message back to the already-active worker.
+
+The ordinary MCP equivalent is `workflow_revise_plan` with client, chat_id,
+item_id, expected_revision, expected_hash, message_id, request_text and request_key.
+OpenCode calls
+`tools["kanban"]["workflow_revise_plan"]({...})` through its discovered Code Mode
+execute catalog. The MCP request starts pending verification and grants no work
+authority. The supervisor verifies it and delivers a new dispatch when the
+worker is idle. Use the host CLI with the same key for an immediate checkpoint;
+it may adopt a queued delivery but never replay an already-submitted message.
+Reconnect old MCP clients to discover the new tool.
+
+Report started before editing. Only after host verification of that report may
+a later retry retain partially edited plan content. Save and commit the revised
+Markdown plan, then report plan_ready with its relative path. The host rechecks
+the original human message, owner and plan evidence. While revision is pending,
+Todo approval is blocked; afterward the new snapshot/hash becomes reviewable in
+the same column. Earlier snapshots retain path, content, hash and author history
+and are preserved in online backups.
+
+Repeat the same request key for a lost receipt. Changed arguments with that key
+are rejected. A rejected source can be corrected with a new key; an already-used
+human message cannot authorize another revision. A new request needs a new human
+message after the latest plan was saved. A failed dispatched revision uses the
+existing exact-worker inline retry after a human requests resumption. Pause,
+withdrawal, scope changes and cancellation retain the normal verified-stop gates.
+Do not poll full workflow snapshots or begin code implementation from this flow.

@@ -100,8 +100,8 @@ def summary(thread, count=5, limit=1800):
     result['turns'] = []
     for turn in thread.get('turns', [])[-count:]:
         result['turns'].append({
-            'id': turn.get('id'), 'status': turn.get('status'), 'error': turn.get('error'),
-            'messages': [{'type': item['type'], 'text': item_text(item)[:limit]}
+            'id': turn.get('id'), 'startedAt': turn.get('startedAt'), 'status': turn.get('status'), 'error': turn.get('error'),
+            'messages': [{'id': item.get('id'), 'type': item['type'], 'text': item_text(item)[:limit]}
                          for item in turn.get('items', [])
                          if item.get('type') in ('userMessage', 'agentMessage')],
         })

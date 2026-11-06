@@ -1,6 +1,6 @@
 # Revise a plan in Plan Review
 
-Status: proposed; awaiting human approval before implementation.
+Status: implementation approved and completed; isolated acceptance passed; live rollout pending.
 Updated: 2026-11-06. Owner: Kanban Agent.
 
 ## Behavior

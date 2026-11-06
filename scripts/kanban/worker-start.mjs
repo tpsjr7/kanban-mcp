@@ -34,10 +34,17 @@ export async function workerPreflight(root, dispatchId, client, options = {}, de
   const dirty = Boolean(git('status', '--porcelain'));
   const kind = check.dispatch.kind;
   if (!owner && dirty && kind !== 'cancel') throw new Error('Unclaimed instance has work requiring review');
-  if (['implement', 'integrate'].includes(kind) && owner !== chatId) {
+  if (['revise_plan', 'implement', 'integrate'].includes(kind) && owner !== chatId) {
     throw new Error('Worker must retain its exact instance claim');
   }
   let planHash = null;
+  if (kind === 'revise_plan') {
+    planHash = await io.hashPlan(instance.worktree, ticket.plan.path);
+    const began = Boolean(check.plan_revision_request?.editing_started);
+    if (planHash !== ticket.plan.hash && !began) {
+      throw Error('Plan edited before revision startup');
+    }
+  }
   if (['implement', 'integrate'].includes(kind)) {
     planHash = await io.hashPlan(instance.worktree, ticket.plan.path);
     if (planHash !== ticket.plan.hash) throw new Error('Approved plan changed');

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, open, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, open, realpath, writeFile, lstat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,8 @@ const help = `Kanban workflow commands:
   team worker remove TEAM --worker WORKER_ID; team remove NAME
   automation desktop-configure --thread ID --turn ID; automation reload
   automation start|status|pause|resume|stop; automation retry TICKET_ID
+  automation revise-plan ITEM --client codex|opencode --revision N --hash HASH
+    --message ID --request-file FILE --key KEY
   automation preflight DISPATCH_ID --client codex|opencode
   automation retry TICKET_ID --inline DISPATCH_ID --client codex|opencode
   automation native-list; automation native-claim DISPATCH_ID
@@ -156,6 +158,22 @@ export async function workflowCommand(root, argv) {
         throw new Error('Preserve and resolve instance changes before release');
       }
       result = control('host_release', { item_id: Number(name) });
+    } else if (verb === 'revise-plan') {
+      const { revisePlanInline } = await import('./plan-revision.mjs');
+      const client = flags.client;
+      if (flags.request && flags['request-file']) throw Error('Choose --request or --request-file');
+      let text = flags.request;
+      if (flags['request-file']) {
+        const file = await lstat(flags['request-file']);
+        if (!file.isFile() || file.size > 64000) throw Error('Request file must be a small regular UTF-8 file');
+        text = await readFile(flags['request-file'], 'utf8');
+      }
+      result = await revisePlanInline(root, {
+        item_id: Number(name), client,
+        chat_id: process.env[client === 'opencode' ? 'OPENCODE_SESSION_ID' : 'CODEX_THREAD_ID'],
+        expected_revision: Number(flags.revision), expected_hash: flags.hash,
+        message_id: flags.message, request_text: text, request_key: flags.key,
+      });
     } else if (verb === 'preflight') {
       const { workerPreflight } = await import('./worker-start.mjs');
       result = await workerPreflight(root, name, flags.client);

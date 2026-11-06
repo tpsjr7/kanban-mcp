@@ -10,6 +10,7 @@ os.environ.update(KANBAN_BACKEND='sqlite', HOME=scratch.name,
 from kanban_mcp.core import KanbanDB
 from kanban_mcp.setup import auto_migrate
 from kanban_mcp import team_runtime as r
+from kanban_mcp import workflow_views as v
 
 
 class WorkflowTests(unittest.TestCase):
@@ -470,6 +471,198 @@ class WorkflowTests(unittest.TestCase):
         finally:
             with r.transaction(self.db, trusted=True) as c:
                 c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
+
+    def revision_request(self, client='codex', chat_id=None, message='human-1', key='revision-1'):
+        from kanban_mcp.plan_revisions import request
+        return request(self.db, self.project, {
+            'client': client, 'chat_id': chat_id or self.id(), 'item_id': self.item,
+            'expected_revision': 0, 'expected_hash': 'hash', 'message_id': message,
+            'request_text': 'Change the plan to keep the Play button without helper text.',
+            'request_key': key})
+
+    def plan_review(self):
+        plan = self.assigned()
+        self.report(plan, 'started')
+        self.report(plan, 'plan_ready', {'plan': 'docs/plan.md'})
+        return plan
+
+    def arm_revision(self, request, inline=True):
+        import hashlib
+        with self.db._db_cursor(dictionary=True) as c:
+            c.execute('SELECT * FROM plan_revision_requests WHERE id=?', (request['id'],))
+            q = c.fetchone()
+        receipt = {key: q[key] for key in ('client', 'chat_id', 'message_id')}
+        import time
+        receipt.update(role='user', source_time=time.time(), verified_at='2026-11-06T21:00:00Z',
+                       sha256=hashlib.sha256(q['request_text'].encode()).hexdigest())
+        return r.host_action(self.db, 'plan_revision_arm', {
+            'id': request['id'], 'inline': inline, 'receipt': receipt,
+            'owner': q['chat_id'], 'plan_hash': q['expected_hash']})
+
+    def test_plan_revision_stays_in_review_and_requires_fresh_plan_before_approval(self):
+        self.plan_review()
+        request = self.revision_request()
+        self.assertEqual(request['state'], 'pending')
+        self.assertEqual(v.ticket(self.db, self.project, self.item)['revision'], 0)
+        result = self.arm_revision(request)
+        check = result['checkpoint']
+        self.assertTrue(check['current'])
+        self.assertEqual(check['dispatch']['kind'], 'revise_plan')
+        self.assertEqual(check['ticket']['status'], 'plan_review')
+        self.assertEqual(check['ticket']['revision'], 1)
+        self.assertEqual(check['plan_revision_request']['message_id'], 'human-1')
+        self.assertEqual(len([d for d in r.snapshot(self.db, self.project)['dispatches']
+                              if d['kind'] == 'cancel']), 0)
+        with self.assertRaisesRegex(Exception, 'revision pending'):
+            self.human_move('todo')
+        dispatch = check['dispatch']
+        self.report(dispatch, 'started')
+        with self.assertRaisesRegex(ValueError, 'reverified'):
+            self.report(dispatch, 'plan_ready', {'plan': 'docs/revised.md'})
+        with self.db._db_cursor(dictionary=True) as c:
+            c.execute("SELECT id FROM workflow_reports WHERE dispatch_id=? AND kind='plan_ready'", (dispatch['id'],))
+            report_id = c.fetchone()['id']
+        r.host_action(self.db, 'verify_report', {'id': report_id, 'plan_hash': 'new-hash',
+                      'plan_path': '/verified/docs/revised.md', 'revision_authority_verified': True})
+        ticket = v.ticket(self.db, self.project, self.item)
+        self.assertEqual(ticket['status'], 'plan_review')
+        self.assertEqual(ticket['plan']['hash'], 'new-hash')
+        self.assertIsNone(ticket['plan_revision_pending'])
+        self.assertFalse(ticket['approvals']['plan'])
+        self.human_move('todo')
+        implementation = next(d for d in r.consume(self.db, self.project) if d['kind'] == 'implement')
+        self.assertEqual(implementation['revision'], 1)
+        self.assertTrue(v.check(self.db, self.project, implementation['id'])['ticket']['approvals']['plan'])
+
+    def test_plan_revision_request_and_arm_are_idempotent_but_changed_keys_fail(self):
+        self.plan_review()
+        first = self.revision_request()
+        self.assertEqual(first['id'], self.revision_request()['id'])
+        with self.assertRaises(ValueError):
+            self.revision_request(message='changed')
+        armed = self.arm_revision(first)
+        self.assertEqual(armed['dispatch_id'], self.arm_revision(first)['checkpoint']['dispatch']['id'])
+        with self.assertRaises(ValueError):
+            self.revision_request(message='second', key='second')
+
+    def test_competing_pending_requests_and_rejected_source_corrections(self):
+        self.plan_review()
+        first = self.revision_request()
+        r.host_action(self.db, 'plan_revision_reject', {'id': first['id'], 'reason': 'Fixture missing source'})
+        corrected = self.revision_request(key='corrected')
+        competing = self.revision_request(message='other-human', key='competing')
+        self.arm_revision(corrected)
+        with self.assertRaises(ValueError):
+            self.arm_revision(competing)
+        self.assertEqual(v.ticket(self.db, self.project, self.item)['revision'], 1)
+
+    def test_inline_revision_adopts_only_unclaimed_queued_delivery(self):
+        self.plan_review()
+        request = self.revision_request()
+        queued = self.arm_revision(request, inline=False)
+        self.assertEqual(queued['checkpoint']['dispatch']['state'], 'queued')
+        resumed = self.arm_revision(request, inline=True)
+        self.assertTrue(resumed['checkpoint']['current'])
+        self.assertEqual(resumed['dispatch_id'], queued['dispatch_id'])
+        self.assertFalse(r.host_action(self.db, 'submitted', {'id': queued['dispatch_id']})['claimed'])
+
+    def test_plan_revision_approval_race_and_foreign_request_leave_plan_untouched(self):
+        self.plan_review()
+        with self.assertRaises(ValueError):
+            self.revision_request(chat_id='foreign')
+        request = self.revision_request()
+        self.human_move('todo')
+        with self.assertRaises(ValueError):
+            self.arm_revision(request)
+        self.assertEqual(v.ticket(self.db, self.project, self.item)['revision'], 0)
+        self.assertIsNone(v.ticket(self.db, self.project, self.item)['plan_revision_pending'])
+
+    def test_plan_revision_missing_evidence_pause_withdrawal_and_stale_reports(self):
+        self.plan_review()
+        request = self.revision_request()
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'plan_revision_arm', {'id': request['id']})
+        r.configure(self.db, self.project, 'pause', {})
+        with self.assertRaises(ValueError):
+            self.arm_revision(request)
+        r.configure(self.db, self.project, 'resume', {})
+        dispatch = self.arm_revision(request)['checkpoint']['dispatch']
+        self.human_move('backlog')
+        r.consume(self.db, self.project)
+        self.assertFalse(v.check(self.db, self.project, dispatch['id'])['current'])
+        with self.assertRaises(ValueError):
+            self.report(dispatch, 'plan_ready', {'plan': 'docs/stale.md'})
+        self.assertTrue(any(d['kind'] == 'cancel' for d in r.snapshot(self.db, self.project)['dispatches']))
+
+    def test_opencode_plan_revision_opaque_identity_and_inline_retry(self):
+        self.plan_review()
+        session = 'ses_exact_non_uuid'
+        with r.transaction(self.db, trusted=True) as c:
+            c.execute("UPDATE team_workers SET client='opencode',chat_id=? WHERE id=?", (session, self.worker))
+        request = self.revision_request('opencode', session)
+        dispatch = self.arm_revision(request)['checkpoint']['dispatch']
+        self.assertEqual(dispatch['target'], {'client': 'opencode', 'chat_id': session})
+        for kind in ('started', 'failed'):
+            result = r.report(self.db, 'opencode', session, dispatch['id'], kind, {})
+            r.host_action(self.db, 'verify_report', {'id': result['report_id']})
+        retry = r.host_action(self.db, 'retry_inline', {
+            'id': dispatch['id'], 'item_id': self.item, 'client': 'opencode', 'chat_id': session,
+            'revision': 1, 'head': 'a' * 40, 'plan_hash': 'partial-edited-hash'})
+        self.assertTrue(retry['checkpoint']['current'])
+        self.assertTrue(retry['checkpoint']['plan_revision_request']['editing_started'])
+        self.assertEqual(retry['checkpoint']['ticket']['status'], 'plan_review')
+
+    def test_second_plan_revision_preserves_both_saved_snapshots_and_rejects_old_message(self):
+        from kanban_mcp.plan_revisions import request as create_request
+        self.plan_review()
+        first = self.arm_revision(self.revision_request())['checkpoint']['dispatch']
+        self.report(first, 'started')
+        report = r.report(self.db, 'codex', self.id(), first['id'], 'plan_ready', {'plan': 'docs/second.md'})
+        r.host_action(self.db, 'verify_report', {'id': report['report_id'], 'plan_hash': 'second-hash',
+                      'plan_path': '/verified/docs/second.md', 'revision_authority_verified': True})
+        data = {'client': 'codex', 'chat_id': self.id(), 'item_id': self.item,
+                'expected_revision': 1, 'expected_hash': 'second-hash', 'message_id': 'human-2',
+                'request_text': 'Revise the second plan.', 'request_key': 'revision-2'}
+        with self.assertRaises(Exception):
+            create_request(self.db, self.project, {**data, 'message_id': 'human-1'})
+        second = self.arm_revision(create_request(self.db, self.project, data))
+        self.assertEqual(second['checkpoint']['ticket']['revision'], 2)
+        with self.db._db_cursor(dictionary=True) as c:
+            c.execute('SELECT revision,snapshot FROM plan_revision_history WHERE item_id=? ORDER BY revision',
+                      (self.item,))
+            history = c.fetchall()
+        import json
+        self.assertEqual([json.loads(row['snapshot'])['plan_hash'] for row in history], ['hash', 'second-hash'])
+
+    def test_browser_approval_endpoint_returns_conflict_while_revision_is_pending(self):
+        from unittest.mock import patch
+        from kanban_mcp import web
+        self.plan_review()
+        self.arm_revision(self.revision_request())
+        with patch.object(web, 'db', self.db):
+            response = web.app.test_client().post('/api/items/' + str(self.item) + '/status',
+                json={'status': 'todo'}, headers={'Authorization': 'Basic aHVtYW46Zml4dHVyZQ=='})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('Plan revision pending', response.get_json()['error'])
+        self.assertEqual(self.db.get_item(self.item)['status_name'], 'plan_review')
+
+    def test_plan_revision_history_and_requests_survive_online_backup(self):
+        import sqlite3
+        import json
+        self.plan_review()
+        self.arm_revision(self.revision_request())
+        with tempfile.TemporaryDirectory() as directory:
+            restored = sqlite3.connect(str(Path(directory) / 'restored.db'))
+            self.db._backend._get_connection().backup(restored)
+            self.assertEqual(restored.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
+            self.assertEqual(restored.execute('PRAGMA foreign_key_check').fetchall(), [])
+            snapshot = json.loads(restored.execute('SELECT snapshot FROM plan_revision_history WHERE item_id=? AND revision=0',
+                                                   (self.item,)).fetchone()[0])
+            self.assertEqual(snapshot['plan_hash'], 'hash')
+            self.assertEqual(snapshot['plan_chat_id'], self.id())
+            self.assertEqual(restored.execute('SELECT state FROM plan_revision_requests WHERE item_id=?',
+                                              (self.item,)).fetchone()[0], 'active')
+            restored.close()
 
     def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
         self.human_move('needs_plan')

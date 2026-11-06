@@ -16,6 +16,12 @@ For a revised plan on a retained claim, preserve the ticket commits and checkpoi
 do not reset or discard them. Report started, then investigate and save a
 repository plan covering the human feedback. Report plan_ready with payload
 {plan: relativeMarkdownPath}. Do not implement yet.`,
+    revise_plan: `The host verified a human request to revise this plan in Plan Review.
+Read plan_revision_request from workflow_check. Retain the assigned instance,
+claim and existing ticket work; do not synchronize/reset it or change columns.
+Report started before editing. Revise only the requested saved plan and commit
+its documentation, then report plan_ready with {plan: relativeMarkdownPath}.
+The card stays in Plan Review. Do not implement until fresh browser approval.`,
     implement: `The human moved Plan Review to Todo for the saved plan revision.
 Verify the plan hash, report started, implement only that plan on the assigned
 instance, test, commit task-owned work and publish its preview.

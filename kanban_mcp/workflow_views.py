@@ -17,7 +17,7 @@ def settings(c, project):
 
 def ticket_row(c, project, item_id):
     c.execute('SELECT i.id AS item_id,s.name AS status,r.team,r.worker,r.revision,r.phase,'
-              'r.reason,r.cancel_pending,r.plan,r.plan_hash,r.plan_path,r.plan_approved,'
+              'r.reason,r.cancel_pending,r.plan_revision_pending,r.plan,r.plan_hash,r.plan_path,r.plan_saved_at,r.plan_approved,'
               'r.merge_approved,r.preview,r.commit_hash,t.instance '
               'FROM items i JOIN statuses s ON s.id=i.status_id '
               'LEFT JOIN ticket_runs r ON r.item_id=i.id '
@@ -33,7 +33,8 @@ def ticket_summary(row):
         'team': row['team'], 'instance': row['instance'], 'worker': row['worker'],
         'revision': row['revision'], 'phase': row['phase'], 'reason': row['reason'],
         'cancel_pending': bool(row['cancel_pending']),
-        'plan': {'path': row['plan_path'] or row['plan'], 'hash': row['plan_hash']},
+        'plan_revision_pending': row['plan_revision_pending'],
+        'plan': {'path': row['plan_path'] or row['plan'], 'hash': row['plan_hash'], 'saved_at': row['plan_saved_at']},
         'approvals': {
             'plan': row['revision'] is not None and row['plan_approved'] == row['revision'],
             'merge': row['revision'] is not None and row['merge_approved'] == row['revision']},
@@ -75,7 +76,7 @@ def check_cursor(c, project, dispatch_id):
     if d['kind'] != 'assign' and row['worker'] != d['worker']:
         blockers.append('assignment_changed')
     stages = {'assign': ('needs_plan',), 'plan': ('needs_plan', 'planning'),
-              'implement': ('todo', 'in_progress'), 'integrate': ('done',)}
+              'revise_plan': ('plan_review',), 'implement': ('todo', 'in_progress'), 'integrate': ('done',)}
     if d['kind'] in stages and row['status'] not in stages[d['kind']]:
         blockers.append('stage_changed')
     if d['kind'] == 'cancel' and not row['cancel_pending']:
@@ -89,7 +90,18 @@ def check_cursor(c, project, dispatch_id):
               'JOIN statuses b ON b.id=e.new_status WHERE e.id=? AND e.item_id=?',
               (d['event_id'], d['item_id']))
     origin = c.fetchone()
-    if d['kind'] != 'cancel':
+    revision_request = None
+    if d['kind'] == 'revise_plan':
+        c.execute('SELECT * FROM plan_revision_requests WHERE id=? AND item_id=? AND state=\'active\'',
+                  (row['plan_revision_pending'], d['item_id']))
+        request = c.fetchone()
+        if (not request or request['expected_revision'] + 1 != d['revision']
+                or not request['receipt'] or request['client'] != json.loads(d['target'])['client']
+                or request['chat_id'] != json.loads(d['target'])['chat_id']):
+            blockers.append('human_revision_request_missing')
+        else:
+            revision_request = {key: request[key] for key in ('id', 'request_text', 'message_id', 'editing_started')}
+    elif d['kind'] != 'cancel':
         expected = {'assign': 'needs_plan', 'plan': 'needs_plan',
                     'implement': 'todo', 'integrate': 'done'}
         revisions = (d['revision'], d['revision'] - 1) if d['kind'] == 'plan' else (d['revision'],)
@@ -131,7 +143,7 @@ def check_cursor(c, project, dispatch_id):
             integration = {key: details.get(key) for key in
                            ('id', 'phase', 'approved', 'main', 'candidate', 'artifact')}
     return {'found': True, 'current': not blockers, 'blockers': blockers,
-            'integration_candidate': integration,
+            'integration_candidate': integration, 'plan_revision_request': revision_request,
             'automation': automation, 'dispatch': d, 'ticket': ticket_summary(row),
             'human_request': origin, 'reports': reports,
             'host_checks_required': d['kind'] != 'assign'}

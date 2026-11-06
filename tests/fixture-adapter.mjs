@@ -82,3 +82,21 @@ export async function verifyReport(root, report, run, team, worker, fetchImpl = 
   }
   return {};
 }
+
+// Disposable authority fixture only. Production adapters must read the exact
+// client-owned human message; these receipts do not validate a real user.
+export async function verifyPlanRevision(root, request) {
+  const { control } = await import('../scripts/kanban/control.mjs');
+  const ticket = control('workflow_ticket', { item_id: request.item_id });
+  const instance = await instanceInfo(root, ticket.instance);
+  const owner = claimOwner(instance.worktree);
+  const plan_hash = await hashPlan(instance.worktree, ticket.plan.path);
+  if (owner !== request.chat_id || plan_hash !== request.expected_hash) {
+    throw Error('Fixture owner/hash mismatch');
+  }
+  return { owner, plan_hash, receipt: {
+    client: request.client, chat_id: request.chat_id, message_id: request.message_id,
+    role: 'user', source_time: Date.now() / 1000, sha256: createHash('sha256').update(request.request_text).digest('hex'),
+    verified_at: new Date().toISOString(), route: 'fake-adapter-acceptance',
+  } };
+}

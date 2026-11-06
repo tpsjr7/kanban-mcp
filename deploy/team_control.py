@@ -25,6 +25,20 @@ def main(request):
         return check(db, project, data['dispatch_id'])
     if action == 'poll':
         return runtime.consume(db, project)
+    if action == 'plan_revision_request':
+        from kanban_mcp.plan_revisions import request
+        return request(db, project, data)
+    if action == 'plan_revision_pending':
+        with db._db_cursor(dictionary=True) as c:
+            c.execute("SELECT * FROM plan_revision_requests WHERE project_id=? AND state='pending' ORDER BY rowid LIMIT 20", (project,))
+            return c.fetchall()
+    if action == 'plan_revision_get':
+        with db._db_cursor(dictionary=True) as c:
+            c.execute('SELECT * FROM plan_revision_requests WHERE project_id=? AND id=?', (project, data['id']))
+            return c.fetchone()
+    if action == 'workflow_ticket':
+        from kanban_mcp.workflow_views import ticket
+        return ticket(db, project, data['item_id'])
     if action == 'reports':
         with db._db_cursor(dictionary=True) as c:
             c.execute("SELECT p.*,d.item_id,d.kind AS dispatch_kind,d.revision,d.worker AS worker_id,d.created_at AS dispatched_at "

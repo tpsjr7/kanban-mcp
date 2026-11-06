@@ -159,6 +159,38 @@ class FramingTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         bridge.endpoint(root)
 
+    def test_history_is_bounded_and_preserves_exact_user_id_text_and_time(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, 'desktop-caller.json').write_text(json.dumps({
+                'thread_id': 'caller', 'turn_id': 'caller-turn'}))
+            history = {'thread': {'id': 'exact-thread'}, 'turns': [{
+                'startedAt': 1793999044, 'items': [
+                    {'id': 'human-message', 'type': 'userMessage',
+                     'content': [{'type': 'text', 'text': 'Exact text\n'}]},
+                    {'id': 'agent-message', 'type': 'agentMessage', 'text': 'Not authority'}]}]}
+            responses = [{'tools': [{'name': 'read_thread', 'namespace': 'codex_app'}]},
+                         {'success': True, 'contentItems': [{'type': 'inputText',
+                                                            'text': json.dumps(history)}]}]
+            output = io.StringIO()
+            with patch.dict(bridge.os.environ, {'KANBAN_AUTOMATION_STATE': directory}), \
+                 patch('sys.argv', ['bridge', 'history', 'exact-thread']), \
+                 patch.object(bridge, 'endpoint', return_value='verified-socket'), \
+                 patch.object(bridge, 'request', side_effect=responses) as request, \
+                 redirect_stdout(output):
+                bridge.main()
+            result = json.loads(output.getvalue())
+            self.assertEqual(result['id'], 'exact-thread')
+            self.assertEqual(len(result['messages']), 1)
+            self.assertEqual(result['messages'][0]['id'], 'human-message')
+            self.assertEqual(result['messages'][0]['source_time'], 1793999044)
+            self.assertEqual(result['messages'][0]['content'][0]['text'], 'Exact text\n')
+            arguments = request.call_args_list[1].args[2]['arguments']
+            self.assertEqual(arguments['turnLimit'], 10)
+            self.assertEqual(arguments['threadId'], 'exact-thread')
+
     def test_fragmented_success(self):
         self.assertEqual(self.run_response({'id':1,'result':{'tools':[]}}), {'tools':[]})
 

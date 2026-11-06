@@ -99,3 +99,11 @@
 - Install scripts default to SQLite (MySQL opt-in via flag)
 - CI install jobs use SQLite by default
 - macOS CI no longer requires Homebrew MySQL
+
+## Plan Review revisions
+
+- Add focused revision requests and host-verified human message receipts for
+  Codex and OpenCode, preserving the assigned instance and Plan Review column.
+- Fence Todo approval while editing, retain plan snapshot history, support
+  same-turn acknowledgment and retry, and preserve history in SQLite backups.
+- Add additive migration 011; existing clients must reconnect for the new tool.
