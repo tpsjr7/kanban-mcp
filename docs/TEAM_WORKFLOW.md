@@ -175,8 +175,16 @@ it through Backlog → Needs Plan so the manager receives a fresh planning reque
 Returning an unassigned planning request to Backlog cancels its queued dispatch
 and releases the request without waiting for a nonexistent worker. After the
 supervisor processes that withdrawal, Backlog → Needs Plan creates one fresh
-request at the current revision. Assigned work still requires the worker's stop
+request at the current revision. Assigned work returned to Backlog still requires the worker's stop
 acknowledgment and verified owner-scoped release before re-entry.
+
+Moving assigned work directly back to Needs Plan preserves the team and instance
+claim. After the current cancellation's stop report is verified, the supervisor
+issues one planning dispatch to that same worker, linked to the human browser
+request. Existing commits and checkpoints are retained. The revised plan must
+pass Plan Review → Todo again; earlier implementation and merge approvals do not
+carry forward. A newer scope revision or stage change blocks this continuation.
+This reconciliation also recovers requests stopped by an older supervisor.
 
 Busy chats and foreign claims remain queued. Submitted delivery without a receipt
 is uncertain, never automatically resent. Inspect the exact owning chat and

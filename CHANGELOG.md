@@ -1,3 +1,10 @@
+# Unreleased: resume requested replanning
+
+- Resume a recorded human Needs Plan request after its current cancellation is
+  verified, retaining the same worker, instance claim and committed work.
+- Preserve the originating browser event and require fresh plan approval.
+- Reject stale stop reports and acknowledge only their exact cancellation.
+
 # Unreleased: managed ticket deletion
 
 - Add SQLite migration 008 to clean up workflow dependencies during item deletion.

@@ -102,7 +102,7 @@ def db_item_for_parent(c, item_id):
     return c.fetchone()
 
 
-def dispatch(c, item, target, kind, revision, worker=None):
+def dispatch(c, item, target, kind, revision, worker=None, event_id=None):
     c.execute("SELECT id FROM workflow_dispatches WHERE item_id=? AND kind=? AND revision=? "
               "AND state NOT IN ('cancelled','failed','completed')", (item, kind, revision))
     if c.fetchone():
@@ -113,7 +113,7 @@ def dispatch(c, item, target, kind, revision, worker=None):
     c.execute('INSERT INTO workflow_dispatches(id,item_id,target,kind,revision,worker,event_id) '
               'VALUES(?,?,?,?,?,?,?)',
               (str(uuid.uuid4()), item, json.dumps(target), kind, revision, worker,
-               origin['id'] if origin else None))
+               event_id if event_id is not None else (origin['id'] if origin else None)))
 
 
 def snapshot(db, project):
@@ -178,6 +178,43 @@ def configure(db, project, action, data):
     return snapshot(db, project)
 
 
+
+def resume_requested_planning(c, project):
+    """Resume a human-requested revision only after its exact stop is verified.
+
+    The durable event and report are the intent record, including for requests
+    stopped by older supervisors. Status alone never authorizes a new dispatch.
+    """
+    c.execute("SELECT r.*,e.id AS request_id FROM ticket_runs r "
+              'JOIN items i ON i.id=r.item_id JOIN statuses s ON s.id=i.status_id '
+              'JOIN workflow_events e ON e.item_id=r.item_id '
+              'JOIN statuses destination ON destination.id=e.new_status '
+              'JOIN statuses origin ON origin.id=e.old_status '
+              "WHERE i.project_id=? AND s.name='needs_plan' AND r.phase='stopped' "
+              "AND r.cancel_pending=0 AND destination.name='needs_plan' "
+              "AND origin.name!='backlog' AND e.browser_user IS NOT NULL "
+              'AND e.consumed=1 AND e.revision=r.revision-1 '
+              'AND NOT EXISTS(SELECT 1 FROM workflow_events newer '
+              'WHERE newer.item_id=r.item_id AND newer.id>e.id) '
+              'AND NOT EXISTS(SELECT 1 FROM integration_lease l WHERE l.item_id=r.item_id) '
+              'AND EXISTS(SELECT 1 FROM workflow_dispatches d '
+              'JOIN workflow_reports p ON p.dispatch_id=d.id '
+              "WHERE d.item_id=r.item_id AND d.kind='cancel' AND d.state='completed' "
+              'AND d.revision=r.revision AND d.worker=r.worker '
+              "AND p.worker=r.worker AND p.kind='stopped' AND p.state='verified')",
+              (project,))
+    for run in c.fetchall():
+        c.execute('SELECT * FROM team_workers WHERE id=? AND project_id=? AND team=?',
+                  (run['worker'], project, run['team']))
+        worker = c.fetchone()
+        if not worker:
+            continue
+        dispatch(c, run['item_id'], worker, 'plan', run['revision'],
+                 run['worker'], event_id=run['request_id'])
+        c.execute("UPDATE ticket_runs SET phase='assigned',reason=NULL WHERE item_id=?",
+                  (run['item_id'],))
+
+
 def consume(db, project):
     with transaction(db) as c:
         c.execute('SELECT * FROM orchestration_settings WHERE project_id=?', (project,))
@@ -222,6 +259,7 @@ def consume(db, project):
                               "cancel_pending=1,reason='Human changed stage; stop acknowledgment required' WHERE item_id=?", (item,))
                     c.execute("UPDATE workflow_dispatches SET state='cancelled' WHERE item_id=? "
                               "AND state IN ('queued','native_pending') AND kind!='cancel'", (item,))
+        resume_requested_planning(c, project)
         # No worker exists to acknowledge withdrawal of an unassigned request.
         # This also repairs records stranded by older supervisors, retaining history.
         c.execute("UPDATE ticket_runs SET phase='released',cancel_pending=0,reason=NULL "
@@ -280,8 +318,10 @@ def report(db, client, chat_id, dispatch_id, kind, payload):
         d = c.fetchone()
         if not d or (d['client'], d['chat_id']) != (client, chat_id):
             raise ValueError('Report does not match the assigned worker')
-        if kind != 'stopped' and (d['revision'] != d['current_revision'] or d['state'] == 'cancelled'):
+        if d['revision'] != d['current_revision'] or d['state'] == 'cancelled':
             raise ValueError('Dispatch is stale')
+        if kind == 'stopped' and d['kind'] != 'cancel':
+            raise ValueError('Stopping requires a current cancellation dispatch')
         if kind not in ('started', 'plan_ready', 'preview_ready', 'integrated', 'stopped', 'failed'):
             raise ValueError('Unknown worker report')
         c.execute('SELECT id FROM workflow_reports WHERE dispatch_id=? AND kind=?', (dispatch_id, kind))
@@ -377,7 +417,7 @@ def host_action(db, action, data):
             item = status(c, p['item_id'])
             c.execute('SELECT * FROM ticket_runs WHERE item_id=?', (item['id'],))
             run = c.fetchone()
-            if p['kind'] != 'stopped' and (run['revision'] != p['revision'] or run['cancel_pending']):
+            if run['revision'] != p['revision'] or (p['kind'] != 'stopped' and run['cancel_pending']):
                 raise ValueError('Report revision is stale or cancellation is pending')
             payload = json.loads(p['payload'])
             phase = p['kind']
@@ -437,8 +477,10 @@ def host_action(db, action, data):
                 c.execute("UPDATE ticket_runs SET phase='closed',reason=NULL WHERE item_id=?", (item['id'],))
                 c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (item['id'],))
             elif phase == 'stopped':
-                c.execute("UPDATE workflow_dispatches SET state='completed' WHERE item_id=? AND kind='cancel'",
-                          (item['id'],))
+                if p['dispatch_kind'] != 'cancel' or not run['cancel_pending']:
+                    raise ValueError('No current cancellation is pending')
+                c.execute("UPDATE workflow_dispatches SET state='completed' WHERE id=?",
+                          (p['dispatch_id'],))
                 c.execute("UPDATE ticket_runs SET cancel_pending=0,phase='stopped' WHERE item_id=?", (item['id'],))
             elif phase == 'failed':
                 c.execute("UPDATE workflow_dispatches SET state='failed' WHERE id=?", (p['dispatch_id'],))

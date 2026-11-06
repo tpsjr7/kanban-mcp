@@ -10,8 +10,10 @@ If none are available, wait; never take foreign claims.`,
 instance claim. Report stopped for this cancellation dispatch. Do not implement,
 integrate, release foreign resources or resume until a new approved dispatch.`,
     plan: `Claim only the assigned instance with your exact chat/session ID.
-Synchronize a clean checkout with committed main, report started, then investigate
-and save a repository plan. Report plan_ready with payload
+For an initial assignment, synchronize a clean checkout with committed main.
+For a revised plan on a retained claim, preserve the ticket commits and checkpoint;
+do not reset or discard them. Report started, then investigate and save a
+repository plan covering the human feedback. Report plan_ready with payload
 {plan: relativeMarkdownPath}. Do not implement yet.`,
     implement: `The human moved Plan Review to Todo for the saved plan revision.
 Verify the plan hash, report started, implement only that plan on the assigned

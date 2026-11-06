@@ -130,6 +130,73 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(run['worker'], self.worker)
         self.assertFalse(any(x['kind']=='cancel' for x in r.consume(self.db, self.project)))
 
+    def reviewed(self):
+        plan = self.assigned()
+        self.report(plan, 'started')
+        self.report(plan, 'plan_ready', {'plan': 'docs/plan.md'})
+        self.human_move('todo')
+        implementation = next(d for d in r.consume(self.db, self.project)
+                              if d['kind'] == 'implement')
+        self.report(implementation, 'started')
+        self.report(implementation, 'preview_ready', {
+            'preview': 'https://local-d.flippyface.com', 'commit': 'a' * 40})
+        return implementation
+
+    def stopped_replan(self):
+        self.reviewed()
+        self.human_move('needs_plan')
+        pending = r.consume(self.db, self.project)
+        self.assertFalse(any(d['kind'] == 'plan' for d in pending))
+        cancel = next(d for d in pending if d['kind'] == 'cancel')
+        self.report(cancel, 'stopped')
+        return cancel
+
+    def test_verified_stop_resumes_requested_plan_on_same_worker(self):
+        self.stopped_replan()
+        pending = r.consume(self.db, self.project)
+        plans = [d for d in pending if d['kind'] == 'plan']
+        self.assertEqual(len(plans), 1)
+        plan = plans[0]
+        self.assertEqual((plan['worker'], plan['revision']), (self.worker, 1))
+        state = r.snapshot(self.db, self.project)
+        run = next(t for t in state['tickets'] if t['item_id'] == self.item)
+        self.assertEqual((run['team'], run['worker']), (self.id(), self.worker))
+        self.assertEqual(run['commit_hash'], 'a' * 40)
+        self.assertIsNone(run['plan_approved'])
+        self.assertIsNone(run['merge_approved'])
+        event = next(e for e in state['events'] if e['id'] == plan['event_id'])
+        self.assertEqual((event['browser_user'], event['new_status']), ('kanban', 'needs_plan'))
+        self.assertEqual([d['id'] for d in r.consume(self.db, self.project)
+                          if d['kind'] == 'plan'], [plan['id']])
+        self.report(plan, 'started')
+        self.report(plan, 'plan_ready', {'plan': 'docs/revised-plan.md'})
+        self.assertEqual(self.db.get_item(self.item)['status_name'], 'plan_review')
+        self.assertFalse(any(d['kind'] == 'implement' for d in r.consume(self.db, self.project)))
+
+    def test_scope_change_after_stop_does_not_reuse_planning_request(self):
+        self.stopped_replan()
+        with self.db._db_cursor(commit=True) as c:
+            c.execute('UPDATE items SET title=? WHERE id=?', ('Newer scope', self.item))
+        self.assertFalse(any(d['kind'] == 'plan' for d in r.consume(self.db, self.project)))
+
+    def test_stale_stop_cannot_acknowledge_newer_cancellation(self):
+        self.reviewed()
+        self.human_move('needs_plan')
+        cancel = next(d for d in r.consume(self.db, self.project) if d['kind'] == 'cancel')
+        r.report(self.db, 'codex', self.id(), cancel['id'], 'stopped', {})
+        with self.db._db_cursor(commit=True) as c:
+            c.execute('UPDATE items SET title=? WHERE id=?', ('Changed again', self.item))
+        with self.assertRaises(ValueError):
+            self.report(cancel, 'stopped')
+        with self.db._db_cursor(dictionary=True) as c:
+            c.execute('SELECT id FROM workflow_reports WHERE dispatch_id=?', (cancel['id'],))
+            report_id = c.fetchone()['id']
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'verify_report', {'id': report_id})
+        run = next(t for t in r.snapshot(self.db, self.project)['tickets']
+                   if t['item_id'] == self.item)
+        self.assertEqual(run['cancel_pending'], 1)
+
     def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
         self.human_move('needs_plan')
         dispatch = r.consume(self.db, self.project)[0]
