@@ -18,6 +18,8 @@ const help = `Kanban workflow commands:
   team worker remove TEAM --worker WORKER_ID; team remove NAME
   automation desktop-configure --thread ID --turn ID; automation reload
   automation start|status|pause|resume|stop; automation retry TICKET_ID
+  automation preflight DISPATCH_ID --client codex|opencode
+  automation retry TICKET_ID --inline DISPATCH_ID --client codex|opencode
   automation native-list; automation native-claim DISPATCH_ID
   automation native-receipt DISPATCH_ID --thread ID
   automation native-failure DISPATCH_ID --thread ID --reason TEXT
@@ -154,8 +156,14 @@ export async function workflowCommand(root, argv) {
         throw new Error('Preserve and resolve instance changes before release');
       }
       result = control('host_release', { item_id: Number(name) });
+    } else if (verb === 'preflight') {
+      const { workerPreflight } = await import('./worker-start.mjs');
+      result = await workerPreflight(root, name, flags.client);
     } else if (verb === 'retry') {
-      result = control('host_retry', { item_id: Number(name) });
+      if (flags.inline) {
+        const { retryInline } = await import('./worker-start.mjs');
+        result = await retryInline(root, Number(name), flags.inline, flags.client);
+      } else result = control('host_retry', { item_id: Number(name) });
     }
   }
   if (result === undefined) throw new Error(help);

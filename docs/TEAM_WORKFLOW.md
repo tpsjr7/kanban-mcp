@@ -123,16 +123,31 @@ completion; Closed does. Unmanaged tickets retain ordinary column behavior.
 
 Use the focused MCP tools on canonical `/workspace/project`:
 
-- `workflow_check(dispatch_id)` before acting and before integration. Compare the
-  exact target client/chat ID, stage and revision against your dispatch and runtime
-  identity; stop on blockers. It includes the originating human request and small
-  report verification records. `current` reflects board state only: existing host
-  ownership, plan-hash, preview, approval and integration evidence checks still apply.
-- `workflow_ticket(item_id)` for one ticket's phase, assignment, plan path/hash and
-  preview. Read the plan file only when needed; use `get_item` for ticket content.
-- Manager: `workflow_queue(limit=20, offset=0)` for pending assignments and registered
-  team/workers. Follow `next_offset` until null. Availability is the host's last
-  observation and must be checked again before assigning or claiming an instance.
+Routine worker startup uses two checks:
+
+1. `workflow_check(dispatch_id)`: compare the exact target client/chat ID, stage and
+   revision against the dispatch and runtime identity; stop on blockers. Its ticket
+   summary already includes assignment, plan path/hash, preview and report state.
+2. Run the host command below with Docker/host escalation on its first invocation.
+   It batches exact runtime identity, instance ownership, Git state and applicable
+   plan-hash/reviewed-commit checks. Then start the assigned work.
+
+```bash
+npm run --silent kanban -- automation preflight EXACT_DISPATCH_ID --client codex
+# OpenCode uses the same command with --client opencode.
+```
+
+Do not follow the first check with `workflow_ticket` just to reread the same data.
+Use that tool only for a standalone ticket lookup, and `get_item` only when specific
+content is missing. Normal task investigation and required tests remain necessary.
+Use returned report states and the retained checkpoint to avoid repeating completed
+steps. Recheck before integration and after material state changes, rather than
+between every read. Do not reread unchanged guides or search implementations of
+known commands during normal startup.
+
+Manager: `workflow_queue(limit=20, offset=0)` lists pending assignments and registered
+team/workers. Follow `next_offset` until null. Availability is the host's last
+observation and must be checked again before assigning or claiming an instance.
 
 `workflow_status` is a full diagnostic snapshot with plan text and history. Do not
 use it for routine worker checkpoints or poll it while waiting. Deduplicate dispatch
@@ -155,7 +170,7 @@ const checkpoint = await tools["kanban"]["workflow_check"]({
   dispatch_id: assignedDispatchID
 });
 // Stop on blockers or an exact-target mismatch.
-await tools["kanban"]["workflow_ticket"]({ item_id: assignedItemID });
+// Run the batched host preflight next; do not also fetch workflow_ticket.
 // Manager only: tools["kanban"]["workflow_queue"]({ limit: 20, offset: 0 });
 await tools["kanban"]["workflow_report"]({
   client: "opencode", chat_id: exactSessionID, dispatch_id: assignedDispatchID,
@@ -220,6 +235,33 @@ receipt before recovery. `retry` permits acknowledged failures, not uncertain
 submission. It continues from the retained checkpoint; it does not authorize
 repeating completed side effects. Automatic-review denial is never bypassed with
 another sender, socket, permission setting or client.
+
+When the human asks the assigned worker to resume a host-verified failed attempt,
+continue in the same turn using the exact failed dispatch ID:
+
+```bash
+npm run --silent kanban -- automation retry TICKET_ID --inline FAILED_DISPATCH_ID --client codex
+# OpenCode: --client opencode, with its exact OPENCODE_SESSION_ID in the host environment.
+```
+
+Use Docker/host escalation on the first attempt. The host verifies the current
+runtime ID (`CODEX_THREAD_ID` or `OPENCODE_SESSION_ID`), retained claim, local state,
+plan and reviewed commit, then atomically rechecks board approval/revision/lease
+and the verified failure. It records an acknowledged child dispatch with an inline
+receipt and the original browser-event provenance. Continue under the returned
+checkpoint's dispatch ID without ending the turn or waiting for a self-message.
+A duplicate returns that same child and its current checkpoint; never replay
+completed side effects. Pause, cancellation, a newer dispatch/revision, changed
+plan/commit, foreign identity/claim or uncertain delivery blocks this path.
+If a runtime variable is absent, resolve it from verified current-session metadata;
+never choose the latest session or guess an ID. The caller-supplied ID remains
+attribution, not cryptographic authentication.
+
+Plain `automation retry TICKET_ID` remains the operator route for delivery to an
+idle worker. An active assigned worker should use `--inline` after an explicit
+human resume request instead of sending itself another dispatch. Retry does not
+authorize new scope, replay completed integration side effects or approve changed
+code; fresh review is still required when the reviewed code changes.
 
 Integrations hold one durable global lease through required primary verification
 and cleanup. Failed gtg stays Done and retains the lease until resolved; another

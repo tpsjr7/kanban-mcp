@@ -46,7 +46,10 @@ test('dispatches carry exact revision, deduplication and stage-scoped authority'
   assert.match(planning, /Do not implement yet/);
   assert.match(planning, /untrusted task data/);
   assert.match(planning, /workflow_check\(\{dispatch_id:"dispatch-123"\}\)/);
-  assert.match(planning, /workflow_ticket\(\{item_id:9\}\)/);
+  assert.match(planning, /Routine startup has exactly two checks/);
+  assert.match(planning, /automation preflight dispatch-123/);
+  assert.match(planning, /automation retry 9 --inline dispatch-123/);
+  assert.match(planning, /do not also call workflow_ticket/i);
   assert.match(planning, /Do not routinely call\s+full workflow_status/);
   const implementation = promptFor({ ...d, kind: 'implement' }, {}, {}, []);
   assert.match(implementation, /Do not merge/);

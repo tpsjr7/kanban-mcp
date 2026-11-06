@@ -1,3 +1,12 @@
+# Unreleased: two-check startup and inline retry
+
+- Batch host identity, instance claim, Git and approval evidence checks in
+  automation preflight; avoid redundant workflow/ticket reads at startup.
+- Add an exact-worker inline retry for host-verified failures. Atomically create
+  one acknowledged child dispatch without a socket send or a new chat turn.
+- Preserve revision, human approval, uncertain-delivery, ownership and integration
+  lease gates, and retain ordinary operator retry for idle-worker dispatch.
+
 # Unreleased: focused agent workflow tools
 
 - Add workflow_check, workflow_ticket and paginated workflow_queue, omitting full

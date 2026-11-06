@@ -20,6 +20,9 @@ def main(request):
         return runtime.snapshot(db, project)
     if action == 'snapshot':
         return runtime.snapshot(db, project)
+    if action == 'workflow_check':
+        from kanban_mcp.workflow_views import check
+        return check(db, project, data['dispatch_id'])
     if action == 'poll':
         return runtime.consume(db, project)
     if action == 'reports':

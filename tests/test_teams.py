@@ -498,6 +498,80 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(len(queued), 1)
         self.assertNotEqual(queued[0]['id'], d['id'])
 
+    def inline_data(self, dispatch):
+        return {'id': dispatch['id'], 'item_id': self.item, 'client': 'codex',
+                'chat_id': self.id(), 'revision': dispatch['revision'],
+                'head': 'a' * 40, 'plan_hash': 'hash'}
+
+    def test_inline_retry_is_atomic_exact_worker_and_does_not_queue_delivery(self):
+        from kanban_mcp import workflow_views as v
+        d = self.assigned()
+        self.report(d, 'failed', {'reason': 'Fixture failure'})
+        data = self.inline_data(d)
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', {**data, 'chat_id': 'foreign'})
+        result = r.host_action(self.db, 'retry_inline', data)
+        self.assertTrue(result['resumed'])
+        child = result['checkpoint']['dispatch']
+        self.assertTrue(result['checkpoint']['current'])
+        self.assertEqual(child['state'], 'acknowledged')
+        self.assertEqual(child['event_id'], d['event_id'])
+        self.assertFalse(any(x['id'] == child['id'] for x in r.consume(self.db, self.project)))
+        again = r.host_action(self.db, 'retry_inline', data)
+        self.assertTrue(again['duplicate'])
+        self.assertEqual(again['checkpoint']['dispatch']['id'], child['id'])
+        self.report(child, 'started')
+        self.report(child, 'plan_ready', {'plan': 'docs/plan.md'})
+        self.assertEqual(self.db.get_item(self.item)['status_name'], 'plan_review')
+        self.assertEqual(v.check(self.db, self.project, d['id'])['dispatch']['state'], 'failed')
+
+    def test_inline_retry_rejects_pause_unverified_uncertain_stale_and_competing_retry(self):
+        d = self.assigned()
+        data = self.inline_data(d)
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'unknown'})
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', data)
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'failed'})
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', data)
+        self.report(d, 'failed', {'reason': 'Fixture failure'})
+        r.configure(self.db, self.project, 'pause', {})
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', data)
+        r.configure(self.db, self.project, 'resume', {})
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', {**data, 'revision': 999})
+        r.host_action(self.db, 'retry', {'item_id': self.item})
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', data)
+
+    def test_inline_retry_rejects_new_scope_after_verified_failure(self):
+        d = self.assigned()
+        self.report(d, 'failed', {'reason': 'Fixture failure'})
+        self.human_move('backlog')
+        r.consume(self.db, self.project)
+        with self.assertRaises(ValueError):
+            r.host_action(self.db, 'retry_inline', self.inline_data(d))
+
+    def test_inline_retry_integrate_keeps_approval_commit_and_lease_gates(self):
+        self.reviewed()
+        self.human_move('done')
+        d = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'integrate')
+        r.host_action(self.db, 'lease', {'item_id': self.item})
+        try:
+            self.report(d, 'failed', {'reason': 'Fixture failure'})
+            data = self.inline_data(d)
+            with self.assertRaises(ValueError):
+                r.host_action(self.db, 'retry_inline', {**data, 'head': 'b' * 40})
+            with self.assertRaises(ValueError):
+                r.host_action(self.db, 'retry_inline', {**data, 'plan_hash': 'changed'})
+            result = r.host_action(self.db, 'retry_inline', data)
+            self.assertTrue(result['checkpoint']['current'])
+            self.assertTrue(result['checkpoint']['ticket']['approvals']['merge'])
+        finally:
+            with r.transaction(self.db, trusted=True) as c:
+                c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
+
     def test_pause_and_new_event_boundary(self):
         self.human_move('needs_plan')
         r.configure(self.db, self.project, 'arm', {})

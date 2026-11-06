@@ -402,7 +402,52 @@ def host_action(db, action, data):
             if not previous or previous['state'] != 'failed':
                 raise ValueError('Only acknowledged failures may retry; reconcile uncertain delivery first')
             dispatch(c, item['id'], json.loads(previous['target']), previous['kind'],
-                     previous['revision'], previous['worker'])
+                     previous['revision'], previous['worker'], event_id=previous['event_id'])
+        elif action == 'retry_inline':
+            # Private host path: the registered worker is already running. Never
+            # queue a message back to that worker or replay an uncertain send.
+            from kanban_mcp.workflow_views import check_cursor
+            c.execute('SELECT d.*,i.project_id FROM workflow_dispatches d '
+                      'JOIN items i ON i.id=d.item_id WHERE d.id=?', (data['id'],))
+            previous = c.fetchone()
+            if not previous or previous['item_id'] != data['item_id']:
+                raise ValueError('Exact failed dispatch and ticket required')
+            identity = json.loads(previous['target'])
+            if (identity.get('client'), identity.get('chat_id')) != (data['client'], data['chat_id']):
+                raise ValueError('Only the exact dispatched worker may resume inline')
+            child_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'kanban-inline-retry:' + previous['id']))
+            c.execute('SELECT id FROM workflow_dispatches WHERE id=?', (child_id,))
+            existing = c.fetchone()
+            if existing:
+                return {'resumed': False, 'duplicate': True,
+                        'checkpoint': check_cursor(c, previous['project_id'], child_id)}
+            view = check_cursor(c, previous['project_id'], previous['id'])
+            if view['blockers'] != ['dispatch_failed'] or previous['kind'] not in ('plan', 'implement', 'integrate'):
+                raise ValueError('Inline retry requires a current failed worker dispatch with no other blockers')
+            c.execute('SELECT id FROM workflow_dispatches WHERE item_id=? '
+                      'ORDER BY created_at DESC,rowid DESC LIMIT 1', (previous['item_id'],))
+            if c.fetchone()['id'] != previous['id']:
+                raise ValueError('A newer dispatch already exists')
+            c.execute("SELECT id FROM workflow_reports WHERE dispatch_id=? AND kind='failed' AND state='verified'",
+                      (previous['id'],))
+            if not c.fetchone():
+                raise ValueError('Failure must be host verified before inline retry')
+            run = view['ticket']
+            if data['revision'] != run['revision']:
+                raise ValueError('Revision changed after host preflight')
+            if previous['kind'] in ('implement', 'integrate') and data['plan_hash'] != run['plan']['hash']:
+                raise ValueError('Plan changed after host preflight')
+            if previous['kind'] == 'integrate' and data['head'] != run['commit']:
+                raise ValueError('Reviewed commit changed after host preflight')
+            receipt = json.dumps({'transport': 'inline', 'client': data['client'],
+                                  'chat_id': data['chat_id'], 'predecessor': previous['id']})
+            c.execute('INSERT INTO workflow_dispatches(id,item_id,worker,target,kind,revision,state,receipt,event_id) '
+                      "VALUES(?,?,?,?,?,?,'acknowledged',?,?)",
+                      (child_id, previous['item_id'], previous['worker'], previous['target'],
+                       previous['kind'], previous['revision'], receipt, previous['event_id']))
+            c.execute('UPDATE ticket_runs SET reason=NULL WHERE item_id=?', (previous['item_id'],))
+            return {'resumed': True, 'duplicate': False,
+                    'checkpoint': check_cursor(c, previous['project_id'], child_id)}
         elif action == 'block':
             c.execute('UPDATE ticket_runs SET reason=? WHERE item_id=?',
                       (data['reason'], data['item_id']))

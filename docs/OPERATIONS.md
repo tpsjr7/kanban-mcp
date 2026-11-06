@@ -14,6 +14,11 @@ Configure the desktop caller with `automation desktop-configure --thread EXACT_I
 Keep claims, browser approvals, reviewed plan hashes and integration evidence intact. A receipt is not proof of completed work. Stop all live writers before a real restore; restore-check uses disposable storage.
 
 Tests: `npm ci`, `npm run test:pilot`, `node --test scripts/kanban/workflow.test.mjs`, and `python tests/test_desktop_bridge.py`. Board regression scripts run inside the built image with tests mounted read-only.
+Worker startup/retry unit checks: `node --test scripts/kanban/worker-start.test.mjs`.
+Real host-command acceptance uses disposable Git worktrees and a Docker volume:
+`KANBAN_TEST_IMAGE=kanban-mcp:local node --test scripts/kanban/worker-start.integration.test.mjs`.
+Build that image first and run with host Docker access; the test sends no chat
+messages and removes only its own volume/worktrees.
 
 `automation reload` restarts only the verified host supervisor without pausing the board. Desktop endpoint disappearance leaves unowned Codex work on the desktop route; only a positively accessible existing CLI owner uses the CLI route. No fallback follows a desktop error.
 

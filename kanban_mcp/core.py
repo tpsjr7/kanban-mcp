@@ -2725,7 +2725,9 @@ class KanbanMCPServer:
         def workflow_check(dispatch_id: str) -> Dict[str, Any]:
             """Compact dispatch checkpoint: target, revision, approvals, blockers
             and report verification. Compare target to your exact current identity.
-            Board state only; host ownership, plan and evidence checks still apply.
+            Includes the ticket summary; do not immediately fetch workflow_ticket.
+            Next run the documented batched host preflight. Board state only;
+            host ownership, plan and evidence checks still apply.
             """
             from kanban_mcp.workflow_views import check
             return check(self.db, self._get_project_id(), dispatch_id)
