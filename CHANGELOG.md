@@ -1,3 +1,11 @@
+# Unreleased: focused agent workflow tools
+
+- Add workflow_check, workflow_ticket and paginated workflow_queue, omitting full
+  plan text, unrelated tickets and historical event/dispatch payloads.
+- Return compact assignment and report acknowledgments, including report state.
+- Use focused checkpoints in Codex/OpenCode instructions and dispatch prompts;
+  retain workflow_status for explicit diagnostics and host orchestration.
+
 # Unreleased: resume requested replanning
 
 - Resume a recorded human Needs Plan request after its current cancellation is

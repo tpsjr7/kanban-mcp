@@ -306,7 +306,11 @@ def assign(db, project, chat_id, item_id, team, worker):
         revision = active['revision']
         dispatch(c, item_id, identity, 'plan', revision, worker)
         c.execute("UPDATE workflow_dispatches SET state='acknowledged' WHERE item_id=? AND kind='assign'", (item_id,))
-    return snapshot(db, project)
+        c.execute("SELECT id FROM workflow_dispatches WHERE item_id=? AND kind='plan' AND revision=? "
+                  'ORDER BY rowid DESC LIMIT 1', (item_id, revision))
+        planning = c.fetchone()
+    return {'assigned': True, 'item_id': item_id, 'team': team, 'worker': worker,
+            'revision': revision, 'dispatch_id': planning['id']}
 
 
 def report(db, client, chat_id, dispatch_id, kind, payload):
@@ -324,12 +328,16 @@ def report(db, client, chat_id, dispatch_id, kind, payload):
             raise ValueError('Stopping requires a current cancellation dispatch')
         if kind not in ('started', 'plan_ready', 'preview_ready', 'integrated', 'stopped', 'failed'):
             raise ValueError('Unknown worker report')
-        c.execute('SELECT id FROM workflow_reports WHERE dispatch_id=? AND kind=?', (dispatch_id, kind))
+        c.execute('SELECT id,state FROM workflow_reports WHERE dispatch_id=? AND kind=?', (dispatch_id, kind))
         existing = c.fetchone()
         if not existing:
             c.execute('INSERT INTO workflow_reports(dispatch_id,worker,kind,payload) VALUES(?,?,?,?)',
                       (dispatch_id, d['worker'], kind, json.dumps(payload)))
-    return {'accepted': True}
+            report_id, state = c.lastrowid, 'pending'
+        else:
+            report_id, state = existing['id'], existing['state']
+    return {'accepted': True, 'report_id': report_id, 'dispatch_id': dispatch_id,
+            'kind': kind, 'state': state, 'duplicate': bool(existing)}
 
 
 def host_action(db, action, data):

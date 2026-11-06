@@ -197,6 +197,141 @@ class WorkflowTests(unittest.TestCase):
                    if t['item_id'] == self.item)
         self.assertEqual(run['cancel_pending'], 1)
 
+    def test_compact_views_are_project_scoped_and_omit_large_content(self):
+        import json
+        from kanban_mcp import workflow_views as v
+        d = self.assigned()
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'delivered'})
+        with r.transaction(self.db, trusted=True) as c:
+            c.execute('UPDATE ticket_runs SET plan_text=? WHERE item_id=?',
+                      ('large-private-plan-' * 10000, self.item))
+        result = v.check(self.db, self.project, d['id'])
+        self.assertTrue(result['current'])
+        self.assertEqual(result['dispatch']['target']['chat_id'], self.id())
+        self.assertEqual(result['human_request']['browser_user'], 'kanban')
+        compact = json.dumps(result)
+        self.assertLess(len(compact), 2500)
+        self.assertNotIn('large-private-plan', compact)
+        self.assertNotIn('plan_text', json.dumps(v.ticket(self.db, self.project, self.item)))
+        other = self.db.ensure_project('/other/' + self.id())
+        self.assertFalse(v.check(self.db, other, d['id'])['found'])
+        self.assertFalse(v.ticket(self.db, other, self.item)['found'])
+        unmanaged = self.db.create_item(self.project, 'feature', 'Unmanaged')
+        self.assertFalse(v.ticket(self.db, self.project, unmanaged)['managed'])
+
+    def test_compact_check_rejects_pause_stale_cancel_and_uncertain_delivery(self):
+        from kanban_mcp import workflow_views as v
+        d = self.assigned()
+        self.assertFalse(v.check(self.db, self.project, d['id'])['current'])
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'unknown'})
+        self.assertIn('dispatch_unknown', v.check(self.db, self.project, d['id'])['blockers'])
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'delivered'})
+        r.configure(self.db, self.project, 'pause', {})
+        self.assertIn('automation_disabled_or_paused', v.check(self.db, self.project, d['id'])['blockers'])
+        r.configure(self.db, self.project, 'resume', {})
+        self.report(d, 'started')
+        self.human_move('backlog')
+        cancel = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'cancel')
+        self.assertIn('stale_revision', v.check(self.db, self.project, d['id'])['blockers'])
+        r.host_action(self.db, 'delivery', {'id': cancel['id'], 'state': 'delivered'})
+        self.assertTrue(v.check(self.db, self.project, cancel['id'])['current'])
+        self.report(cancel, 'stopped')
+        self.assertFalse(v.check(self.db, self.project, cancel['id'])['current'])
+
+    def test_compact_check_requires_plan_approval_and_exposes_report_state(self):
+        from kanban_mcp import workflow_views as v
+        d = self.assigned()
+        self.report(d, 'started')
+        self.report(d, 'plan_ready', {'plan': 'docs/plan.md'})
+        self.human_move('todo')
+        implementation = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'implement')
+        r.host_action(self.db, 'delivery', {'id': implementation['id'], 'state': 'delivered'})
+        self.assertTrue(v.check(self.db, self.project, implementation['id'])['current'])
+        ack = r.report(self.db, 'codex', self.id(), implementation['id'], 'started', {})
+        self.assertEqual(ack['state'], 'pending')
+        self.assertFalse(ack['duplicate'])
+        self.assertEqual(v.check(self.db, self.project, implementation['id'])['reports'][0]['state'], 'pending')
+        self.report(implementation, 'started')
+        ack = r.report(self.db, 'codex', self.id(), implementation['id'], 'started', {})
+        self.assertEqual((ack['state'], ack['duplicate']), ('verified', True))
+        with r.transaction(self.db, trusted=True) as c:
+            c.execute('UPDATE ticket_runs SET plan_approved=NULL WHERE item_id=?', (self.item,))
+        self.assertIn('plan_not_approved', v.check(self.db, self.project, implementation['id'])['blockers'])
+
+    def test_manager_queue_is_paginated_and_preserves_busy_teams(self):
+        from kanban_mcp import workflow_views as v
+        d = self.assigned()
+        for index in range(3):
+            item = self.db.create_item(self.project, 'feature', 'Pending ' + str(index))
+            token = r.browser_user.set('kanban')
+            try:
+                self.db.set_status(item, 'needs_plan')
+            finally:
+                r.browser_user.reset(token)
+        r.consume(self.db, self.project)
+        r.host_action(self.db, 'capacity', {'project': self.project, 'available': [self.id()]})
+        first = v.queue(self.db, self.project, limit=2)
+        second = v.queue(self.db, self.project, limit=2, offset=first['next_offset'])
+        self.assertEqual((first['total'], len(first['pending']), len(second['pending'])), (3, 2, 1))
+        self.assertIsNone(second['next_offset'])
+        self.assertFalse(first['teams'][0]['available'])
+        self.assertEqual(first['teams'][0]['active_items'], [self.item])
+        self.assertNotIn('dispatches', first)
+        with self.assertRaises(ValueError):
+            v.queue(self.db, self.project, limit=0)
+
+    def test_compact_opencode_session_and_report_identity(self):
+        from kanban_mcp import workflow_views as v
+        session = 'ses_exact_opaque_session'
+        worker = 'opencode:' + session
+        r.configure(self.db, self.project, 'worker_add', {
+            'team': self.id(), 'identity': {'client': 'opencode', 'chat_id': session, 'title': 'Worker'}})
+        self.human_move('needs_plan')
+        r.consume(self.db, self.project)
+        ack = r.assign(self.db, self.project, 'manager', self.item, self.id(), worker)
+        self.assertNotIn('tickets', ack)
+        r.host_action(self.db, 'delivery', {'id': ack['dispatch_id'], 'state': 'delivered'})
+        result = v.check(self.db, self.project, ack['dispatch_id'])
+        self.assertTrue(result['current'])
+        self.assertEqual(result['dispatch']['target'], {'client': 'opencode', 'chat_id': session})
+        report = r.report(self.db, 'opencode', session, ack['dispatch_id'], 'started', {})
+        self.assertEqual(report['state'], 'pending')
+        with self.assertRaises(ValueError):
+            r.report(self.db, 'codex', session, ack['dispatch_id'], 'started', {})
+
+    def test_compact_integration_requires_approval_and_lease(self):
+        from kanban_mcp import workflow_views as v
+        self.reviewed()
+        self.human_move('done')
+        d = next(x for x in r.consume(self.db, self.project) if x['kind'] == 'integrate')
+        r.host_action(self.db, 'delivery', {'id': d['id'], 'state': 'delivered'})
+        self.assertIn('integration_lease_missing', v.check(self.db, self.project, d['id'])['blockers'])
+        r.host_action(self.db, 'lease', {'item_id': self.item})
+        self.assertTrue(v.check(self.db, self.project, d['id'])['current'])
+        with r.transaction(self.db, trusted=True) as c:
+            c.execute('UPDATE ticket_runs SET merge_approved=NULL WHERE item_id=?', (self.item,))
+            c.execute('UPDATE integration_lease SET item_id=NULL WHERE item_id=?', (self.item,))
+        self.assertIn('merge_not_approved', v.check(self.db, self.project, d['id'])['blockers'])
+
+    def test_compact_tools_use_ordinary_mcp_arguments(self):
+        import asyncio
+        import json
+        from kanban_mcp.core import KanbanMCPServer
+        server = KanbanMCPServer()
+        server.current_project_id = self.project
+        d = self.assigned()
+        for name, arguments in [('workflow_check', {'dispatch_id': d['id']}),
+                                ('workflow_ticket', {'item_id': self.item}),
+                                ('workflow_queue', {'limit': 1, 'offset': 0})]:
+            response = asyncio.run(server.handle_request({
+                'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                'params': {'name': name, 'arguments': arguments}}))
+            self.assertNotIn('error', response)
+            result = json.loads(response['result']['content'][0]['text'])
+            self.assertNotIn('plan_text', result)
+            self.assertNotIn('events', result)
+        server.db._backend._get_connection().close()
+
     def test_delete_withdrawn_ticket_cleans_workflow_foreign_keys(self):
         self.human_move('needs_plan')
         dispatch = r.consume(self.db, self.project)[0]

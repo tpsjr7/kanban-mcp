@@ -121,24 +121,52 @@ completion; Closed does. Unmanaged tickets retain ordinary column behavior.
 
 ## Worker protocol
 
-Read `workflow_status` on canonical `/workspace/project` and validate dispatch
-ID, worker, stage and revision. Deduplicate dispatch IDs in your checkpoint. Claim
-only the assigned instance, preserve saved runtime/GPU settings, and synchronize
-clean committed main before planning. Do not edit primary while implementing.
+Use the focused MCP tools on canonical `/workspace/project`:
+
+- `workflow_check(dispatch_id)` before acting and before integration. Compare the
+  exact target client/chat ID, stage and revision against your dispatch and runtime
+  identity; stop on blockers. It includes the originating human request and small
+  report verification records. `current` reflects board state only: existing host
+  ownership, plan-hash, preview, approval and integration evidence checks still apply.
+- `workflow_ticket(item_id)` for one ticket's phase, assignment, plan path/hash and
+  preview. Read the plan file only when needed; use `get_item` for ticket content.
+- Manager: `workflow_queue(limit=20, offset=0)` for pending assignments and registered
+  team/workers. Follow `next_offset` until null. Availability is the host's last
+  observation and must be checked again before assigning or claiming an instance.
+
+`workflow_status` is a full diagnostic snapshot with plan text and history. Do not
+use it for routine worker checkpoints or poll it while waiting. Deduplicate dispatch
+IDs in your checkpoint. Claim only the assigned instance and preserve runtime/GPU
+settings. Synchronize clean committed main on initial planning; retain ticket commits
+and checkpoints when revising a plan on the same claim. Do not edit primary while
+implementing.
 
 Reports use `workflow_report(client, chat_id, dispatch_id, kind, payload)` with
 JSON-string payloads. Supply the exact runtime ID (`CODEX_THREAD_ID` or
 `OPENCODE_SESSION_ID`) per call. Reports are accepted into an outbox; acceptance
-is distinct from host verification and board progression.
+is distinct from host verification and board progression. The compact acknowledgment
+returns `report_id`, `state` and `duplicate`; pending means the host has not yet
+verified it. Use `workflow_check` to confirm verification at a real checkpoint,
+without a full snapshot or a model-driven polling loop.
 
 ```javascript
 // OpenCode: call through Code Mode execute using the current discovered catalog.
-await tools["kanban"]["workflow_status"]({});
+const checkpoint = await tools["kanban"]["workflow_check"]({
+  dispatch_id: assignedDispatchID
+});
+// Stop on blockers or an exact-target mismatch.
+await tools["kanban"]["workflow_ticket"]({ item_id: assignedItemID });
+// Manager only: tools["kanban"]["workflow_queue"]({ limit: 20, offset: 0 });
 await tools["kanban"]["workflow_report"]({
   client: "opencode", chat_id: exactSessionID, dispatch_id: assignedDispatchID,
   kind: "plan_ready", payload: JSON.stringify({ plan: "docs/MY_TASK_PLAN.md" })
 });
 ```
+
+Reconnect existing Codex and OpenCode MCP connections after this schema update;
+a running disposable MCP container retains its old tool catalog. OpenCode uses
+these ordinary arguments through its Code Mode `execute` catalog; no Codex-only
+identity or plugin is required.
 
 Codex calls the same MCP tools with `client: "codex"` and its exact thread ID.
 The registered manager uses `workflow_assign(chat_id, item_id, team, worker)`;

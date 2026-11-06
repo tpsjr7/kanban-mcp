@@ -2715,9 +2715,36 @@ class KanbanMCPServer:
 
         @self.tool("workflow_status")
         def workflow_status() -> Dict[str, Any]:
-            """Inspect registered teams, assignments and dispatches."""
+            """Full diagnostic snapshot, including plan text and history.
+            Prefer workflow_check, workflow_ticket or workflow_queue for routine work.
+            """
             from kanban_mcp.team_runtime import snapshot
             return snapshot(self.db, self._get_project_id())
+
+        @self.tool("workflow_check")
+        def workflow_check(dispatch_id: str) -> Dict[str, Any]:
+            """Compact dispatch checkpoint: target, revision, approvals, blockers
+            and report verification. Compare target to your exact current identity.
+            Board state only; host ownership, plan and evidence checks still apply.
+            """
+            from kanban_mcp.workflow_views import check
+            return check(self.db, self._get_project_id(), dispatch_id)
+
+        @self.tool("workflow_ticket")
+        def workflow_ticket(item_id: int) -> Dict[str, Any]:
+            """One ticket's compact workflow, plan path/hash and preview.
+            Omits plan text and history. Use get_item for ticket content.
+            """
+            from kanban_mcp.workflow_views import ticket
+            return ticket(self.db, self._get_project_id(), item_id)
+
+        @self.tool("workflow_queue")
+        def workflow_queue(limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+            """Manager view: pending assignments and teams with registered workers.
+            limit 1..100; paginate next_offset. Host must recheck availability.
+            """
+            from kanban_mcp.workflow_views import queue
+            return queue(self.db, self._get_project_id(), limit, offset)
 
         @self.tool("workflow_assign")
         def workflow_assign(chat_id: str, item_id: int, team: str, worker: str) -> Dict[str, Any]:
