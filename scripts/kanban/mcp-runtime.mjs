@@ -23,7 +23,7 @@ export function docker(args, options = {}) {
     encoding: 'utf8', timeout: 15000, maxBuffer: 20 * 1024 * 1024, ...options,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr?.trim() || 'Docker command failed');
+  if (result.status !== 0) throw new Error(String(result.stderr || '').trim() || `Docker command failed (${result.status})`);
   return result.stdout;
 }
 

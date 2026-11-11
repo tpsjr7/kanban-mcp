@@ -65,6 +65,7 @@ test('one service supports 20 isolated clients, cleanup, restart and recovery', 
   const clients = [];
   const recovery = `${volume}-restore`;
   try {
+    assert.throws(() => docker(['inspect', `kanban-test-absent-${randomUUID()}`], { encoding: null }), /No such (object|container)/i);
     for (let index = 0; index < 20; index++) clients.push(client(env));
     const initialized = await Promise.all(clients.map(value => value.request(1, 'initialize')));
     assert(initialized.every(value => value.result.protocolVersion === '2024-11-05'));
