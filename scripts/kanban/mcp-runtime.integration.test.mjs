@@ -150,6 +150,13 @@ test('one service supports 20 isolated clients, cleanup, restart and recovery', 
     assert.equal(restored.updates.rows, 2);
     stopService(config);
     assert.equal(inspect(config.name), null);
+    await ensureService(config);
+    docker(['exec', config.name, 'python', '-c',
+      "from pathlib import Path; Path('/tmp/kanban-mcp-runtime/service.sock').unlink()"]);
+    await assert.rejects(ensureService(config), /not ready/);
+    assert.throws(() => stopService(config), /Cannot verify MCP connections/);
+    stopService(config, true);
+    assert.equal(inspect(config.name), null);
   } finally {
     for (const value of clients) { value.child.stdin.destroy(); value.child.kill('SIGTERM'); }
     await Promise.all(clients.map(value => value.child.exitCode !== null || value.child.signalCode !== null

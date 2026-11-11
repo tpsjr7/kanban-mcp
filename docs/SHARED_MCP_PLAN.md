@@ -1,6 +1,6 @@
 # Shared MCP runtime
 
-Status: implemented; final standalone and live adoption checks in progress. Approved 2026-11-10.
+Status: implemented and checked on Linux. New live client connections adopted; retained legacy clients need reconnection. Windows execution unverified. Approved 2026-11-10.
 
 Replace a Docker container per client connection with one owned MCP service per
 board. Keep web independent, the existing named SQLite volume, canonical project,
@@ -42,3 +42,5 @@ busy chats. Remove legacy containers only with exact ownership and disconnected
 client evidence. Record deferred legacy clients, Windows limitations, checks and
 commit IDs. Keep implementation/tests here; music_gen owns only its wrapper and
 integration policy. Commit task-owned changes and run scoped completion checks.
+
+Results: [shared MCP acceptance](SHARED_MCP_ACCEPTANCE.md).

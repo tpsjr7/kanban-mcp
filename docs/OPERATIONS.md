@@ -68,3 +68,5 @@ Shared runtime checks: `npm run test:mcp`, then
 Run `python tests/test_shared_runtime.py` inside the image with tests mounted read-only.
 The Docker test uses a disposable named board and verifies 20 concurrent clients,
 EOF/signals/abrupt loss, restart, persistence and online backup restoration.
+
+Acceptance and platform limits: [shared MCP runtime](SHARED_MCP_ACCEPTANCE.md).

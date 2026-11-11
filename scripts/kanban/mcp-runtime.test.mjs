@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -56,5 +56,18 @@ test('portable lifecycle lock excludes competitors and releases after failures',
     await assert.rejects(withLifecycleLock('board', () => { throw Error('fixture'); }, base), /fixture/);
     assert.equal(await withLifecycleLock('board', () => 7, base), 7);
     await assert.rejects(readFile(join(base, 'not-a-lock')), /ENOENT/);
+  } finally { await rm(base, { recursive: true, force: true }); }
+});
+
+
+test('changed lifecycle ownership is retained for reconciliation', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'kanban-lock-owner-'));
+  try {
+    await assert.rejects(withLifecycleLock('board', async () => {
+      const [directory] = await readdir(base);
+      await writeFile(join(base, directory, 'owner.json'), JSON.stringify({ token: 'foreign' }));
+    }, base), /ownership changed/);
+    const [directory] = await readdir(base);
+    assert.equal(JSON.parse(await readFile(join(base, directory, 'owner.json'), 'utf8')).token, 'foreign');
   } finally { await rm(base, { recursive: true, force: true }); }
 });
