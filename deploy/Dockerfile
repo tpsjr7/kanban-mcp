@@ -5,6 +5,7 @@ COPY pyproject.toml README.md LICENSE /app/
 COPY kanban_mcp /app/kanban_mcp
 RUN pip install --no-build-isolation --no-deps /app && groupadd --gid 10001 kanban && useradd --uid 10001 --gid 10001 --no-create-home kanban && mkdir /data && chown kanban:kanban /data && chmod 700 /data
 COPY --chmod=0644 deploy/operations.py deploy/web.py deploy/team_control.py /opt/kanban/
+RUN chmod 0755 /opt/kanban
 ENV KANBAN_BACKEND=sqlite KANBAN_SQLITE_PATH=/data/kanban.db \
     KANBAN_PROJECT_DIR=/workspace/project PYTHONUNBUFFERED=1 HOME=/tmp
 LABEL ai.yolofi.kanban.mcp-protocol="1" \
