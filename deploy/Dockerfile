@@ -7,7 +7,8 @@ RUN pip install --no-build-isolation --no-deps /app && groupadd --gid 10001 kanb
 COPY deploy/operations.py deploy/web.py deploy/team_control.py /opt/kanban/
 ENV KANBAN_BACKEND=sqlite KANBAN_SQLITE_PATH=/data/kanban.db \
     KANBAN_PROJECT_DIR=/workspace/project PYTHONUNBUFFERED=1 HOME=/tmp
-LABEL org.opencontainers.image.source="https://github.com/multidimensionalcats/kanban-mcp" \
+LABEL ai.yolofi.kanban.mcp-protocol="1" \
+    org.opencontainers.image.source="https://github.com/multidimensionalcats/kanban-mcp" \
     org.opencontainers.image.revision="49061b866ad6020b9eee9d9c43fa304061952960"
 USER 10001:10001
 WORKDIR /data

@@ -2418,40 +2418,44 @@ class KanbanDB:
 class KanbanMCPServer:
     """MCP Server for Kanban system."""
 
-    def __init__(self, name: str = "kanban-mcp", version: str = "1.0.0"):
+    def __init__(self, name: str = "kanban-mcp", version: str = "1.0.0",
+                 database=None):
         self.name = name
         self.version = version
         self.tools = {}
 
-        # Setup logging before anything that might log
-        log_dir = Path.home() / ".kanban_mcp"
-        log_dir.mkdir(exist_ok=True)
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[logging.FileHandler(log_dir / 'kanban_server.log')]
-        )
+        # Only the service/standalone owner configures file logging.
+        if database is None and not logging.getLogger().handlers:
+            # Setup logging before anything that might log
+            log_dir = Path.home() / ".kanban_mcp"
+            log_dir.mkdir(exist_ok=True)
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                handlers=[logging.FileHandler(log_dir / 'kanban_server.log')]
+            )
+
         self.logger = logging.getLogger(self.name)
 
         # Silence noisy MySQL connector logging
         logging.getLogger('mysql.connector').setLevel(logging.WARNING)
 
-        self.db = KanbanDB()
+        self.db = database if database is not None else KanbanDB()
+        if database is None:
+            # Auto-apply pending migrations
+            from kanban_mcp.setup import auto_migrate
+            try:
+                auto_migrate(self.db._backend)
+            except Exception as e:
+                logger.error("Migration failed: %s", e)
+                logger.error(
+                    "The server will start but some features may not work. "
+                    "Fix the issue above and restart.")
 
-        # Auto-apply pending migrations
-        from kanban_mcp.setup import auto_migrate
-        try:
-            auto_migrate(self.db._backend)
-        except Exception as e:
-            logger.error("Migration failed: %s", e)
-            logger.error(
-                "The server will start but some features may not work. "
-                "Fix the issue above and restart.")
-
-        from kanban_mcp.attribution import ensure_schema
-        ensure_schema(self.db)
-        from kanban_mcp.team_runtime import ensure_schema as ensure_teams
-        ensure_teams(self.db)
+            from kanban_mcp.attribution import ensure_schema
+            ensure_schema(self.db)
+            from kanban_mcp.team_runtime import ensure_schema as ensure_teams
+            ensure_teams(self.db)
 
         # Current project state
         self.current_project_id = None

@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { configuration, connect, ensureService, serviceStatus, stopService } from './kanban/mcp-runtime.mjs';
+import { withLifecycleLock } from './kanban/lifecycle-lock.mjs';
 const adapter = process.env.KANBAN_ADAPTER ? await import(pathToFileURL(process.env.KANBAN_ADAPTER).href) : null;
 
 export const image = process.env.KANBAN_MCP_IMAGE || 'kanban-mcp:local';
@@ -46,10 +47,10 @@ function compose(args, workspace) {
   });
 }
 
-async function main(argv) {
+async function main(argv, locked = false) {
   const [action, argument] = argv;
   if (!action || action === '--help') {
-    console.log('Usage: npm run kanban -- up|down|status|backup|restore-check FILE|seed FILE');
+    console.log('Usage: npm run kanban -- up|down|status|mcp|mcp-stop [--force]|backup|restore-check FILE|seed FILE');
     console.log('Workflow: manager|team|automation --help');
     return;
   }
@@ -57,30 +58,25 @@ async function main(argv) {
     const { workflowCommand } = await import('./kanban/commands.mjs');
     return workflowCommand(root, argv);
   }
-  const expected = ['restore-check', 'seed'].includes(action) ? 2 : 1;
+  const expected = ['restore-check', 'seed'].includes(action) || (action === 'mcp-stop' && argument === '--force') ? 2 : 1;
   if (argv.length !== expected) throw new Error('Incorrect Kanban command arguments');
   const workspace = await realpath(root);
+  const mcp = configuration(workspace);
   if (action === 'mcp') {
-    const result = spawnSync('docker', containerArguments(['kanban-mcp'],
-      process.env.KANBAN_MCP_VOLUME || volume, process.env.KANBAN_MCP_IMAGE || image),
-    { stdio: 'inherit' });
-    if (result.error) throw result.error;
-    process.exitCode = result.status ?? 1;
+    const service = await ensureService(mcp);
+    process.exitCode = await connect(mcp, service.id);
+    return;
+  }
+  if (action === 'mcp-stop') {
+    stopService(mcp, argument === '--force');
+    console.log('Shared MCP service stopped; board data preserved.');
     return;
   }
   if (!['up', 'down', 'status', 'backup', 'restore-check', 'seed'].includes(action)) {
-    throw new Error('Usage: npm run kanban -- up|down|status|backup|restore-check FILE|seed FILE');
+    throw new Error('Unknown Kanban action; use --help');
   }
-  if (!process.env.KANBAN_LIFECYCLE_LOCKED) {
-    const state = join(homedir(), '.local/state/music-gen/kanban');
-    await mkdir(state, { recursive: true, mode: 0o700 });
-    const result = spawnSync('flock', ['-n', join(state, 'lifecycle.lock'),
-      process.execPath, fileURLToPath(import.meta.url), ...argv], {
-      stdio: 'inherit', env: { ...process.env, KANBAN_LIFECYCLE_LOCKED: '1' },
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error('Kanban command failed or another lifecycle command is running.');
-    return;
+  if (!locked && action !== 'status') {
+    return withLifecycleLock(volume, () => main(argv, true));
   }
   const current = inspect();
   if (action === 'status') {
@@ -88,6 +84,7 @@ async function main(argv) {
       running: current?.State?.Running ?? false, health: current?.State?.Health?.Status,
       owner: current?.Config?.Labels?.['ai.yolofi.kanban.owner'], volume,
       local: 'http://127.0.0.1:18120', public: 'https://kanban.flippyface.com',
+      mcp: serviceStatus(mcp),
     }, null, 2));
     return;
   }

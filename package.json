@@ -9,7 +9,9 @@
     "kanban": "node scripts/kanban.mjs",
     "test:pilot": "node tests/kanban-time.test.mjs && node tests/kanban-attribution.test.mjs && node tests/kanban-plan-link.test.mjs",
     "test:integration": "node --test scripts/kanban/integration-candidate.test.mjs",
-    "test:workflow": "node --test scripts/kanban/plan-revision.test.mjs scripts/kanban/worker-start.test.mjs scripts/kanban/workflow.test.mjs"
+    "test:workflow": "node --test scripts/kanban/plan-revision.test.mjs scripts/kanban/worker-start.test.mjs scripts/kanban/workflow.test.mjs",
+    "test:mcp": "node --test scripts/kanban/mcp-runtime.test.mjs",
+    "test:mcp:integration": "node --test scripts/kanban/mcp-runtime.integration.test.mjs"
   },
   "devDependencies": {
     "jest": "^29.7.0",

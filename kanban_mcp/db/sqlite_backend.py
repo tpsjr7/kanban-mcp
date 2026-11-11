@@ -185,6 +185,13 @@ class SQLiteBackend(DatabaseBackend):
             'total_count': len(items) + len(updates)
         }
 
+    def close(self):
+        """Release this thread's connection; other threads retain their own."""
+        connection = getattr(self._local, 'conn', None)
+        if connection is not None:
+            connection.close()
+            self._local.conn = None
+
     def run_migrations(self, migrations_dir: str) -> None:
         """Apply pending migrations — delegates to setup module."""
         from kanban_mcp.setup import auto_migrate
