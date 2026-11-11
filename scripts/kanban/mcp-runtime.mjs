@@ -105,7 +105,13 @@ export async function ensureService(config) {
     args.push(config.image, 'python', '-m', moduleName, 'serve');
     try { docker(args); }
     catch (error) {
-      current = inspect(config.name);
+      if (!error.message.includes('already in use')) throw error;
+      // Docker can reserve the name before inspect can see the new object.
+      const deadline = Date.now() + 5000;
+      do {
+        current = inspect(config.name);
+        if (!current) await delay(100);
+      } while (!current && Date.now() < deadline);
       if (!current) throw error;
     }
     current ??= inspect(config.name);

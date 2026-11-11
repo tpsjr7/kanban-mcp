@@ -152,6 +152,9 @@ test('one service supports 20 isolated clients, cleanup, restart and recovery', 
     assert.equal(inspect(config.name), null);
   } finally {
     for (const value of clients) { value.child.stdin.destroy(); value.child.kill('SIGTERM'); }
+    await Promise.all(clients.map(value => value.child.exitCode !== null || value.child.signalCode !== null
+      ? Promise.resolve() : new Promise(resolve => value.child.once('exit', resolve))));
+    await delay(500);
     if (inspect(config.name)) stopService(config, true);
     docker(['volume', 'rm', '-f', volume]);
     docker(['volume', 'rm', '-f', recovery]);
